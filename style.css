@@ -1,4 +1,4 @@
-/* Inline Image Generation Extension Styles v2.2 */
+/* Inline Image Generation Extension Styles v2.6 */
 
 /* Settings Panel */
 .iig-settings {
@@ -35,6 +35,13 @@
     font-size: 0.85em;
     color: var(--SmartThemeQuoteColor);
     margin: 2px 0 4px 0;
+}
+
+/* v2.6: Manual reset hint */
+.iig-settings .iig-manual-hint {
+    color: #e0a040;
+    font-size: 0.8em;
+    margin: 0 0 4px 0;
 }
 
 /* ============================================
