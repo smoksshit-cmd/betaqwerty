@@ -696,20 +696,21 @@ function buildEnhancedPrompt(basePrompt, style, options = {}) {
     const useFixedStyle = settings.fixedStyleEnabled === true && settings.fixedStyle?.trim();
     const activeStyle = useFixedStyle ? settings.fixedStyle.trim() : (style || '');
 
-    // ===== BLOCK 1: STYLE — ABSOLUTE TOP PRIORITY =====
-    // v2.5: Style goes FIRST, before everything else, with the strongest possible wording
-
-    if (activeStyle) {
-        promptParts.push(`[MANDATORY ART STYLE — THIS IS THE #1 RULE FOR THE ENTIRE IMAGE: Render everything in "${activeStyle}" style. Every element — characters, backgrounds, lighting, colors, linework, shading — MUST follow this style. Do NOT use photorealistic/realistic rendering unless the style explicitly says so. This overrides any default model behavior.]`);
-    }
-
-    // ===== BLOCK 2: REFERENCE IMAGES (concise) =====
+    // ===== BLOCK 1: REFERENCE IMAGES — HIGHEST PRIORITY FOR LIKENESS =====
+    // v2.5: References go FIRST so the model sees them before anything else
 
     if (options._referenceLabels?.length > 0) {
         const labelsText = options._referenceLabels.map((ref, i) =>
             `Image ${i + 1}: ${ref.label}`
         ).join('; ');
-        promptParts.push(`[REFERENCE IMAGES: ${labelsText}. Copy their exact appearance (face, eyes, hair color, skin, body type) but render them in the art style above.]`);
+        promptParts.push(`[REFERENCE IMAGES — HIGHEST PRIORITY: ${labelsText}. You MUST copy their EXACT appearance: face structure, eye color, hair color, skin tone, body type, and all distinctive features. Character likeness from these references is NON-NEGOTIABLE.]`);
+    }
+
+    // ===== BLOCK 2: STYLE — MANDATORY FOR RENDERING =====
+    // v2.5: Style comes right after refs — "draw THESE characters in THIS style"
+
+    if (activeStyle) {
+        promptParts.push(`[MANDATORY ART STYLE — APPLIES TO THE ENTIRE IMAGE: Render everything in "${activeStyle}" style. Every element — characters, backgrounds, lighting, colors, linework, shading — MUST follow this style. Do NOT use photorealistic/realistic rendering unless the style explicitly says so. Keep character likeness from references above, but draw them in "${activeStyle}" style.]`);
     }
 
     // ===== BLOCK 3: APPEARANCE — brief, only key traits =====
@@ -876,7 +877,10 @@ async function generateImageGemini(prompt, style, references = [], options = {})
     // v2.5: Much stronger system instruction for style enforcement
     if (activeStyle) {
         body.systemInstruction = {
-            parts: [{ text: `You are an image generation assistant. CRITICAL RULE: ALL images you generate MUST be rendered in this exact art style: "${activeStyle}". This is NON-NEGOTIABLE. Every aspect of the image — characters, backgrounds, lighting, colors, linework, shading, proportions — must follow this style. Do NOT default to photorealism or any other style. If reference images are provided, copy the CHARACTER APPEARANCES (face, eyes, hair color, body type) from them, but ALWAYS render the visual output in the specified art style. The style "${activeStyle}" takes absolute priority over the model's default rendering behavior.` }]
+            parts: [{ text: `You are an image generation assistant. You have TWO non-negotiable rules:
+1. CHARACTER LIKENESS (highest priority): If reference images are provided, you MUST copy the EXACT appearance of each character — face structure, eye color, hair color, skin tone, body type, distinctive features. Never deviate from the reference likeness.
+2. ART STYLE (mandatory rendering): ALL images MUST be rendered in this exact art style: "${activeStyle}". Every aspect — linework, shading, coloring, backgrounds, lighting, proportions — must follow "${activeStyle}". Do NOT default to photorealism or any other style unless "${activeStyle}" explicitly requires it.
+In short: draw the characters from the references, but render everything in "${activeStyle}" style.` }]
         };
     }
 
