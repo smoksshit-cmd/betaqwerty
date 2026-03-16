@@ -1243,105 +1243,6 @@ function createErrorPlaceholder(tagId, errorMessage, tagInfo) {
 // MESSAGE PROCESSING
 // ============================================================
 
-function wrapImageWithRegen(img, messageId, tagIndex) {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'iig-image-wrapper';
-    wrapper.style.cssText = 'position: relative; display: inline-block;';
-
-    const regenBtn = document.createElement('div');
-    regenBtn.className = 'iig-single-regen';
-    regenBtn.title = 'Перегенерировать эту картинку';
-    regenBtn.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i>';
-    // v2.5: Always visible (semi-transparent), brighter on hover
-    regenBtn.style.cssText = 'position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 50%; background: var(--SmartThemeBotMesBlurTintColor, rgba(0,0,0,0.5)); color: var(--SmartThemeBodyColor, #fff); font-size: 13px; z-index: 1; opacity: 0.5; transition: opacity 0.15s, transform 0.15s;';
-    regenBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        await regenerateSingleImage(messageId, tagIndex);
-    });
-
-    wrapper.addEventListener('mouseenter', () => { regenBtn.style.opacity = '1'; regenBtn.style.transform = 'scale(1.1)'; });
-    wrapper.addEventListener('mouseleave', () => { regenBtn.style.opacity = '0.5'; regenBtn.style.transform = 'scale(1)'; });
-
-    wrapper.appendChild(regenBtn);
-    wrapper.appendChild(img);
-    return wrapper;
-}
-
-// v2.5: Re-wraps existing generated images after messageFormatting destroys DOM wrappers
-function wrapExistingImages(mesTextEl, messageId) {
-    if (!mesTextEl) return;
-    // Find all generated/instruction images that are NOT already wrapped
-    const images = mesTextEl.querySelectorAll('img.iig-generated-image, img[data-iig-instruction]');
-    let tagIndex = 0;
-    for (const img of images) {
-        // Skip if already inside a wrapper
-        if (img.closest('.iig-image-wrapper')) { tagIndex++; continue; }
-        // Skip error images and placeholder srcs
-        const src = img.getAttribute('src') || '';
-        if (src.includes('[IMG:GEN]') || src.includes('[IMG:ERROR]') || src === '' || src === '#') { tagIndex++; continue; }
-        // Only wrap images with actual file paths (already generated)
-        if (src.startsWith('/') || src.startsWith('data:')) {
-            const wrapped = wrapImageWithRegen(img, messageId, tagIndex);
-            img.replaceWith(wrapped);
-        }
-        tagIndex++;
-    }
-}
-
-async function regenerateSingleImage(messageId, tagIndex) {
-    const context = SillyTavern.getContext();
-    const message = context.chat[messageId];
-    if (!message) { toastr.error('Сообщение не найдено'); return; }
-
-    const tags = await parseImageTags(message.mes, { forceAll: true });
-    if (!tags[tagIndex]) { toastr.error('Тег не найден'); return; }
-    const tag = tags[tagIndex];
-
-    const messageElement = document.querySelector(`#chat .mes[mesid="${messageId}"]`);
-    if (!messageElement) return;
-    const mesTextEl = messageElement.querySelector('.mes_text');
-    if (!mesTextEl) return;
-
-    const allWrappers = Array.from(mesTextEl.querySelectorAll('.iig-image-wrapper'));
-    const allImgs = Array.from(mesTextEl.querySelectorAll('img.iig-generated-image, img.iig-error-image, img[data-iig-instruction]'));
-    const targetEl = allWrappers[tagIndex] || allImgs[tagIndex];
-    if (!targetEl) { toastr.error('Картинка не найдена в DOM'); return; }
-
-    const abortController = new AbortController();
-    const lp = createLoadingPlaceholder(`iig-single-${messageId}-${tagIndex}`, () => abortController.abort());
-    targetEl.replaceWith(lp);
-    const statusEl = lp.querySelector('.iig-status');
-
-    let references;
-    try { references = await collectReferenceImages(tag.prompt); } catch (_) { references = []; }
-
-    try {
-        const dataUrl = await generateImageWithRetry(tag.prompt, tag.style, (s) => { if (statusEl) statusEl.textContent = s; }, {
-            aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality,
-            references, signal: abortController.signal,
-        });
-        if (statusEl) statusEl.textContent = 'Сохранение...';
-        const imagePath = await saveImageToFile(dataUrl);
-
-        const img = document.createElement('img');
-        img.className = 'iig-generated-image'; img.src = imagePath; img.alt = tag.prompt;
-        const instrMatch = tag.fullMatch.match(/data-iig-instruction\s*=\s*(['"])([\s\S]*?)\1/i);
-        if (instrMatch) img.setAttribute('data-iig-instruction', instrMatch[2]);
-
-        const wrapped = wrapImageWithRegen(img, messageId, tagIndex);
-        lp.replaceWith(wrapped);
-
-        message.mes = message.mes.replace(tag.fullMatch, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${imagePath}"`));
-        await context.saveChat();
-        toastr.success('Картинка перегенерирована', 'Генерация картинок', { timeOut: 2000 });
-    } catch (error) {
-        iigLog('ERROR', `Single regen failed: ${error.message}`);
-        lp.replaceWith(createErrorPlaceholder(`iig-single-${messageId}-${tagIndex}`, error.message, tag));
-        if (abortController.signal.aborted) toastr.warning('Генерация отменена');
-        else toastr.error(`Ошибка: ${error.message}`);
-    }
-}
-
 async function processMessageTags(messageId) {
     const context = SillyTavern.getContext();
     const settings = getSettings();
@@ -1456,8 +1357,7 @@ async function processMessageTags(messageId) {
             const img = document.createElement('img');
             img.className = 'iig-generated-image'; img.src = imagePath; img.alt = tag.prompt;
             if (tag.isNewFormat) { const m = tag.fullMatch.match(/data-iig-instruction\s*=\s*(['"])([\s\S]*?)\1/i); if (m) img.setAttribute('data-iig-instruction', m[2]); }
-            const wrapped = wrapImageWithRegen(img, messageId, index);
-            loadingPlaceholder.replaceWith(wrapped);
+            loadingPlaceholder.replaceWith(img);
             if (tag.isNewFormat) { message.mes = message.mes.replace(tag.fullMatch, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${imagePath}"`)); }
             else { message.mes = message.mes.replace(tag.fullMatch, `[IMG:✓:${imagePath}]`); }
             toastr.success(`Картинка ${index + 1}/${tags.length} готова`, 'Генерация картинок', { timeOut: 2000 });
@@ -1480,8 +1380,6 @@ async function processMessageTags(messageId) {
     if (typeof context.messageFormatting === 'function') {
         mesTextEl.innerHTML = context.messageFormatting(message.mes, message.name, message.is_system, message.is_user, messageId);
     }
-    // v2.5: Re-wrap images with regen buttons after messageFormatting destroys DOM
-    wrapExistingImages(mesTextEl, messageId);
 }
 
 async function regenerateMessageImages(messageId) {
@@ -1507,26 +1405,21 @@ async function regenerateMessageImages(messageId) {
         sharedReferences = [];
     }
 
-    const allWrappers = Array.from(mesTextEl.querySelectorAll('.iig-image-wrapper'));
-    const allBareImgs = Array.from(mesTextEl.querySelectorAll('img[data-iig-instruction], img.iig-generated-image, img.iig-error-image'));
-    const targetPool = allWrappers.length >= tags.length ? allWrappers :
-        allWrappers.length > 0 ? allWrappers : allBareImgs;
+    const allImgs = Array.from(mesTextEl.querySelectorAll('img[data-iig-instruction], img.iig-generated-image, img.iig-error-image'));
 
     for (let index = 0; index < tags.length; index++) {
         if (abortController.signal.aborted) break;
 
         const tag = tags[index];
-        const targetEl = targetPool[index] || null;
+        const targetEl = allImgs[index] || null;
 
         if (!targetEl) {
             iigLog('WARN', `No matching element for tag ${index}, skipping regen`);
             continue;
         }
 
-        const innerImg = targetEl.querySelector?.('img[data-iig-instruction]') || targetEl;
-
         try {
-            const instruction = innerImg.getAttribute?.('data-iig-instruction');
+            const instruction = targetEl.getAttribute?.('data-iig-instruction');
             const lp = createLoadingPlaceholder(`iig-regen-${messageId}-${index}`, () => {
                 abortController.abort();
             });
@@ -1542,8 +1435,7 @@ async function regenerateMessageImages(messageId) {
             const img = document.createElement('img');
             img.className = 'iig-generated-image'; img.src = imagePath; img.alt = tag.prompt;
             if (instruction) img.setAttribute('data-iig-instruction', instruction);
-            const wrapped = wrapImageWithRegen(img, messageId, index);
-            lp.replaceWith(wrapped);
+            lp.replaceWith(img);
             message.mes = message.mes.replace(tag.fullMatch, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${imagePath}"`));
             toastr.success(`Картинка ${index + 1}/${tags.length} готова`, 'Генерация картинок', { timeOut: 2000 });
         } catch (error) {
@@ -1582,9 +1474,6 @@ function addButtonsToExistingMessages() {
         const msg = context.chat[mid];
         if (msg && !msg.is_user) {
             addRegenerateButton(el, mid);
-            // v2.5: Wrap existing generated images with per-image regen buttons
-            const mesTextEl = el.querySelector('.mes_text');
-            if (mesTextEl) wrapExistingImages(mesTextEl, mid);
         }
     }
 }
@@ -1596,9 +1485,6 @@ async function onMessageReceived(messageId) {
     if (!el) return;
     addRegenerateButton(el, messageId);
     await processMessageTags(messageId);
-    // v2.5: Wrap any generated images that survived formatting (or loaded from history)
-    const mesTextEl = el.querySelector('.mes_text');
-    if (mesTextEl) wrapExistingImages(mesTextEl, messageId);
 }
 
 // ============================================================
