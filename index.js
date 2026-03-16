@@ -1200,40 +1200,18 @@ function wrapImageWithRegen(img, messageId, tagIndex) {
     regenBtn.className = 'iig-single-regen';
     regenBtn.title = 'Перегенерировать эту картинку';
     regenBtn.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i>';
-    // v2.5: Always visible (semi-transparent), brighter on hover
-    regenBtn.style.cssText = 'position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 50%; background: var(--SmartThemeBotMesBlurTintColor, rgba(0,0,0,0.5)); color: var(--SmartThemeBodyColor, #fff); font-size: 13px; z-index: 1; opacity: 0.5; transition: opacity 0.15s, transform 0.15s;';
+    regenBtn.style.cssText = 'position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; display: none; align-items: center; justify-content: center; cursor: pointer; border-radius: 50%; background: var(--SmartThemeBotMesBlurTintColor, rgba(0,0,0,0.5)); color: var(--SmartThemeBodyColor, #fff); font-size: 13px; z-index: 1; transition: opacity 0.15s;';
     regenBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         await regenerateSingleImage(messageId, tagIndex);
     });
 
-    wrapper.addEventListener('mouseenter', () => { regenBtn.style.opacity = '1'; regenBtn.style.transform = 'scale(1.1)'; });
-    wrapper.addEventListener('mouseleave', () => { regenBtn.style.opacity = '0.5'; regenBtn.style.transform = 'scale(1)'; });
+    wrapper.addEventListener('mouseenter', () => { regenBtn.style.display = 'flex'; });
+    wrapper.addEventListener('mouseleave', () => { regenBtn.style.display = 'none'; });
 
     wrapper.appendChild(regenBtn);
     wrapper.appendChild(img);
     return wrapper;
-}
-
-// v2.5: Re-wraps existing generated images after messageFormatting destroys DOM wrappers
-function wrapExistingImages(mesTextEl, messageId) {
-    if (!mesTextEl) return;
-    // Find all generated/instruction images that are NOT already wrapped
-    const images = mesTextEl.querySelectorAll('img.iig-generated-image, img[data-iig-instruction]');
-    let tagIndex = 0;
-    for (const img of images) {
-        // Skip if already inside a wrapper
-        if (img.closest('.iig-image-wrapper')) { tagIndex++; continue; }
-        // Skip error images and placeholder srcs
-        const src = img.getAttribute('src') || '';
-        if (src.includes('[IMG:GEN]') || src.includes('[IMG:ERROR]') || src === '' || src === '#') { tagIndex++; continue; }
-        // Only wrap images with actual file paths (already generated)
-        if (src.startsWith('/') || src.startsWith('data:')) {
-            const wrapped = wrapImageWithRegen(img, messageId, tagIndex);
-            img.replaceWith(wrapped);
-        }
-        tagIndex++;
-    }
 }
 
 async function regenerateSingleImage(messageId, tagIndex) {
@@ -1428,8 +1406,6 @@ async function processMessageTags(messageId) {
     if (typeof context.messageFormatting === 'function') {
         mesTextEl.innerHTML = context.messageFormatting(message.mes, message.name, message.is_system, message.is_user, messageId);
     }
-    // v2.5: Re-wrap images with regen buttons after messageFormatting destroys DOM
-    wrapExistingImages(mesTextEl, messageId);
 }
 
 async function regenerateMessageImages(messageId) {
@@ -1528,12 +1504,7 @@ function addButtonsToExistingMessages() {
         if (mesId === null) continue;
         const mid = parseInt(mesId, 10);
         const msg = context.chat[mid];
-        if (msg && !msg.is_user) {
-            addRegenerateButton(el, mid);
-            // v2.5: Wrap existing generated images with per-image regen buttons
-            const mesTextEl = el.querySelector('.mes_text');
-            if (mesTextEl) wrapExistingImages(mesTextEl, mid);
-        }
+        if (msg && !msg.is_user) addRegenerateButton(el, mid);
     }
 }
 
@@ -1544,9 +1515,6 @@ async function onMessageReceived(messageId) {
     if (!el) return;
     addRegenerateButton(el, messageId);
     await processMessageTags(messageId);
-    // v2.5: Wrap any generated images that survived formatting (or loaded from history)
-    const mesTextEl = el.querySelector('.mes_text');
-    if (mesTextEl) wrapExistingImages(mesTextEl, messageId);
 }
 
 // ============================================================
@@ -2333,232 +2301,6 @@ function bindSettingsEvents() {
 }
 
 // ============================================================
-// STANDALONE IMAGE GENERATION (single art button)
-// v2.5: Generate a single image via modal dialog
-// ============================================================
-
-let standaloneAbortController = null;
-
-function createStandaloneModal() {
-    // Remove existing modal if any
-    document.getElementById('iig_standalone_modal')?.remove();
-
-    const settings = getSettings();
-    const useFixedStyle = settings.fixedStyleEnabled && settings.fixedStyle?.trim();
-
-    const modal = document.createElement('div');
-    modal.id = 'iig_standalone_modal';
-    modal.className = 'iig-modal-overlay';
-    modal.innerHTML = `
-        <div class="iig-modal">
-            <div class="iig-modal-header">
-                <span><i class="fa-solid fa-palette"></i> Генерация арта</span>
-                <div class="iig-modal-close" title="Закрыть"><i class="fa-solid fa-xmark"></i></div>
-            </div>
-            <div class="iig-modal-body">
-                <div class="iig-modal-field">
-                    <label for="iig_standalone_prompt">Промпт</label>
-                    <textarea id="iig_standalone_prompt" class="text_pole" rows="4" placeholder="Опишите что нарисовать..."></textarea>
-                </div>
-                <div class="iig-modal-field">
-                    <label for="iig_standalone_style">Стиль ${useFixedStyle ? '<span class="iig-modal-hint">(перезаписан фикс стилем)</span>' : ''}</label>
-                    <input type="text" id="iig_standalone_style" class="text_pole" value="${useFixedStyle ? settings.fixedStyle : ''}" placeholder="manhwa style, anime, watercolor..." ${useFixedStyle ? 'disabled' : ''}>
-                </div>
-                <div class="iig-modal-row">
-                    <div class="iig-modal-field iig-modal-half">
-                        <label for="iig_standalone_ratio">Соотношение</label>
-                        <select id="iig_standalone_ratio" class="text_pole">
-                            ${VALID_ASPECT_RATIOS.map(r => `<option value="${r}" ${r === (settings.aspectRatio || '1:1') ? 'selected' : ''}>${r}</option>`).join('')}
-                        </select>
-                    </div>
-                    <div class="iig-modal-field iig-modal-half">
-                        <label for="iig_standalone_size">Разрешение</label>
-                        <select id="iig_standalone_size" class="text_pole">
-                            ${VALID_IMAGE_SIZES.map(s => `<option value="${s}" ${s === (settings.imageSize || '1K') ? 'selected' : ''}>${s}</option>`).join('')}
-                        </select>
-                    </div>
-                </div>
-                <label class="checkbox_label" style="margin-top:4px;">
-                    <input type="checkbox" id="iig_standalone_refs" checked>
-                    <span>Отправить референсы (аватарки)</span>
-                </label>
-                <div id="iig_standalone_result" class="iig-modal-result" style="display:none;"></div>
-                <div id="iig_standalone_status" class="iig-modal-status" style="display:none;"></div>
-            </div>
-            <div class="iig-modal-footer">
-                <div id="iig_standalone_generate" class="menu_button"><i class="fa-solid fa-wand-magic-sparkles"></i> Сгенерировать</div>
-                <div id="iig_standalone_cancel" class="menu_button" style="display:none;"><i class="fa-solid fa-stop"></i> Отмена</div>
-                <div id="iig_standalone_insert" class="menu_button" style="display:none;"><i class="fa-solid fa-paper-plane"></i> Вставить в чат</div>
-                <div id="iig_standalone_save" class="menu_button" style="display:none;"><i class="fa-solid fa-floppy-disk"></i> Сохранить</div>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-
-    // Close modal
-    const closeModal = () => {
-        if (standaloneAbortController) { standaloneAbortController.abort(); standaloneAbortController = null; }
-        modal.remove();
-    };
-    modal.querySelector('.iig-modal-close').addEventListener('click', closeModal);
-    modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
-
-    // Generate
-    modal.querySelector('#iig_standalone_generate').addEventListener('click', () => standaloneGenerate(modal));
-
-    // Cancel
-    modal.querySelector('#iig_standalone_cancel').addEventListener('click', () => {
-        if (standaloneAbortController) { standaloneAbortController.abort(); standaloneAbortController = null; }
-    });
-
-    // Ctrl+Enter to generate
-    modal.querySelector('#iig_standalone_prompt').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault();
-            standaloneGenerate(modal);
-        }
-    });
-
-    // Focus prompt
-    setTimeout(() => modal.querySelector('#iig_standalone_prompt')?.focus(), 100);
-}
-
-async function standaloneGenerate(modal) {
-    const prompt = modal.querySelector('#iig_standalone_prompt')?.value?.trim();
-    if (!prompt) { toastr.warning('Введите промпт'); return; }
-
-    const style = modal.querySelector('#iig_standalone_style')?.value?.trim() || '';
-    const aspectRatio = modal.querySelector('#iig_standalone_ratio')?.value || '1:1';
-    const imageSize = modal.querySelector('#iig_standalone_size')?.value || '1K';
-    const sendRefs = modal.querySelector('#iig_standalone_refs')?.checked !== false;
-
-    const genBtn = modal.querySelector('#iig_standalone_generate');
-    const cancelBtn = modal.querySelector('#iig_standalone_cancel');
-    const insertBtn = modal.querySelector('#iig_standalone_insert');
-    const saveBtn = modal.querySelector('#iig_standalone_save');
-    const resultEl = modal.querySelector('#iig_standalone_result');
-    const statusEl = modal.querySelector('#iig_standalone_status');
-
-    genBtn.style.display = 'none';
-    cancelBtn.style.display = '';
-    insertBtn.style.display = 'none';
-    saveBtn.style.display = 'none';
-    resultEl.style.display = 'none';
-    statusEl.style.display = 'block';
-    statusEl.textContent = 'Подготовка...';
-    statusEl.className = 'iig-modal-status';
-
-    standaloneAbortController = new AbortController();
-
-    let references = [];
-    if (sendRefs) {
-        try {
-            statusEl.textContent = 'Сбор референсов...';
-            references = await collectReferenceImages(prompt);
-        } catch (_) { references = []; }
-    }
-
-    try {
-        validateSettings();
-        const dataUrl = await generateImageWithRetry(prompt, style, (s) => { statusEl.textContent = s; }, {
-            aspectRatio, imageSize, references, signal: standaloneAbortController.signal,
-        });
-
-        statusEl.textContent = 'Сохранение...';
-        const imagePath = await saveImageToFile(dataUrl);
-
-        // Show result
-        resultEl.style.display = 'block';
-        resultEl.innerHTML = `<img src="${imagePath}" class="iig-modal-result-img" alt="${prompt}">`;
-        statusEl.style.display = 'none';
-        cancelBtn.style.display = 'none';
-        genBtn.style.display = '';
-        genBtn.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i> Ещё раз';
-        insertBtn.style.display = '';
-        saveBtn.style.display = '';
-
-        // Store path for insert
-        resultEl.dataset.imagePath = imagePath;
-        resultEl.dataset.prompt = prompt;
-
-        // Insert into chat
-        insertBtn.onclick = async () => {
-            try {
-                const context = SillyTavern.getContext();
-                const chat = context.chat;
-                if (!chat || chat.length === 0) { toastr.warning('Нет активного чата'); return; }
-                // Find last bot message
-                let targetMsgId = -1;
-                for (let i = chat.length - 1; i >= 0; i--) {
-                    if (!chat[i].is_user) { targetMsgId = i; break; }
-                }
-                if (targetMsgId === -1) { toastr.warning('Нет сообщений бота для вставки'); return; }
-                const msg = chat[targetMsgId];
-                const imgTag = `\n\n![${prompt.substring(0, 50)}](${imagePath})`;
-                msg.mes += imgTag;
-                await context.saveChat();
-                // Re-render message
-                const mesEl = document.querySelector(`#chat .mes[mesid="${targetMsgId}"] .mes_text`);
-                if (mesEl && typeof context.messageFormatting === 'function') {
-                    mesEl.innerHTML = context.messageFormatting(msg.mes, msg.name, msg.is_system, msg.is_user, targetMsgId);
-                }
-                toastr.success('Картинка вставлена в чат');
-                modal.remove();
-            } catch (error) {
-                toastr.error(`Ошибка вставки: ${error.message}`);
-            }
-        };
-
-        // Save (download) button
-        saveBtn.onclick = () => {
-            const a = document.createElement('a');
-            a.href = imagePath;
-            a.download = `iig_standalone_${Date.now()}.png`;
-            a.click();
-            toastr.success('Картинка скачана');
-        };
-
-        toastr.success('Арт готов!', 'Генерация картинок', { timeOut: 2000 });
-    } catch (error) {
-        iigLog('ERROR', `Standalone generation failed: ${error.message}`);
-        statusEl.textContent = `Ошибка: ${error.message}`;
-        statusEl.className = 'iig-modal-status iig-modal-status-error';
-        cancelBtn.style.display = 'none';
-        genBtn.style.display = '';
-        genBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Сгенерировать';
-        if (standaloneAbortController?.signal?.aborted) {
-            statusEl.textContent = 'Генерация отменена';
-        } else {
-            toastr.error(`Ошибка: ${error.message}`);
-        }
-    } finally {
-        standaloneAbortController = null;
-    }
-}
-
-function addStandaloneButton() {
-    if (document.getElementById('iig_standalone_btn')) return;
-    const sendForm = document.getElementById('leftSendForm') || document.getElementById('send_form');
-    if (!sendForm) return;
-
-    const btn = document.createElement('div');
-    btn.id = 'iig_standalone_btn';
-    btn.className = 'iig-standalone-btn interactable';
-    btn.title = 'Сгенерировать арт';
-    btn.tabIndex = 0;
-    btn.innerHTML = '<i class="fa-solid fa-palette"></i>';
-    btn.addEventListener('click', () => createStandaloneModal());
-
-    // Insert into send form area
-    const sendBut = document.getElementById('send_but') || sendForm.querySelector('.fa-paper-plane')?.closest('div');
-    if (sendBut) {
-        sendBut.parentNode.insertBefore(btn, sendBut);
-    } else {
-        sendForm.appendChild(btn);
-    }
-}
-
-// ============================================================
 // INIT
 // ============================================================
 
@@ -2569,7 +2311,6 @@ function addStandaloneButton() {
     context.eventSource.on(context.event_types.APP_READY, () => {
         createSettingsUI();
         addButtonsToExistingMessages();
-        addStandaloneButton();
         updateWardrobeInjection();
         updateHairstyleInjection();
         console.log('[IIG] Inline Image Generation v2.5 loaded');
