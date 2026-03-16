@@ -4,13 +4,15 @@
  * Catches [IMG:GEN:{json}] tags in AI messages and generates images via configured API.
  * Supports OpenAI-compatible and Gemini-compatible (nano-banana) endpoints.
  *
- * v2.3: Wardrobe clothing descriptions (manual + AI-generated via vision model),
- *        injection of clothing descriptions into text model prompt
+ * v2.4: Bug fixes (multi-ref OpenAI, regen matching, sequential generation,
+ *        apostrophe JSON, DOM-safe legacy tags), request timeout, cancel button
  */
 
 const MODULE_NAME = 'inline_image_gen';
 
 const processingMessages = new Set();
+// v2.4: Map of messageId -> AbortController for cancellation
+const activeAbortControllers = new Map();
 
 const logBuffer = [];
 const MAX_LOG_ENTRIES = 200;
@@ -77,6 +79,14 @@ const defaultSettings = Object.freeze({
     injectWardrobeToChat: true,
     wardrobeInjectionDepth: 1,
     wardrobeDescPrompt: 'Describe this clothing outfit in detail for a character in a roleplay. Focus on: type of garment, color, material/texture, style, notable features, accessories. Be concise but thorough (2-4 sentences). Write in English.',
+    // v2.4: Request timeout
+    requestTimeout: 120,
+    // v2.4: Hairstyles
+    hairstyleItems: [],
+    activeHairstyleChar: null,
+    activeHairstyleUser: null,
+    injectHairstyleToChat: true,
+    hairstyleDescPrompt: 'Describe this hairstyle shape and form for a character in a roleplay. Focus on: hair length, texture, style (straight/curly/wavy), cut, bangs, volume, layers, accessories (ribbons, clips, pins), and overall silhouette. Do NOT mention or describe hair color — only describe the shape and styling. Be concise but thorough (2-3 sentences). Write in English.',
 });
 
 const IMAGE_MODEL_KEYWORDS = [
@@ -113,11 +123,10 @@ function getSettings() {
             context.extensionSettings[MODULE_NAME][key] = defaultSettings[key];
         }
     }
-    // v2.3: Migrate old wardrobe items without description
-    const items = context.extensionSettings[MODULE_NAME].wardrobeItems || [];
-    for (const item of items) {
-        if (!Object.hasOwn(item, 'description')) {
-            item.description = '';
+    // Migrate items without description
+    for (const key of ['wardrobeItems', 'hairstyleItems']) {
+        for (const item of (context.extensionSettings[MODULE_NAME][key] || [])) {
+            if (!Object.hasOwn(item, 'description')) item.description = '';
         }
     }
     return context.extensionSettings[MODULE_NAME];
@@ -318,175 +327,124 @@ async function resizeImageBase64(base64, maxSize = 512) {
 }
 
 // ============================================================
-// WARDROBE SYSTEM
+// GENERIC OUTFIT SYSTEM (wardrobe + hairstyle)
 // ============================================================
 
-function generateWardrobeId() {
-    return 'ward_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
-}
+const OUTFIT_SYSTEMS = {
+    wardrobe: {
+        itemsKey: 'wardrobeItems', activeCharKey: 'activeWardrobeChar', activeUserKey: 'activeWardrobeUser',
+        idPrefix: 'ward_', defaultName: 'Outfit', injectEnabledKey: 'injectWardrobeToChat',
+        descPromptKey: 'wardrobeDescPrompt', injectionKey: MODULE_NAME + '_wardrobe',
+        wearingVerb: 'is currently wearing',
+    },
+    hairstyle: {
+        itemsKey: 'hairstyleItems', activeCharKey: 'activeHairstyleChar', activeUserKey: 'activeHairstyleUser',
+        idPrefix: 'hair_', defaultName: 'Hairstyle', injectEnabledKey: 'injectHairstyleToChat',
+        descPromptKey: 'hairstyleDescPrompt', injectionKey: MODULE_NAME + '_hairstyle',
+        wearingVerb: "'s current hairstyle:",
+    }
+};
 
-function addWardrobeItem(name, imageData, target = 'char') {
-    const settings = getSettings();
-    const item = {
-        id: generateWardrobeId(),
-        name: name || 'Outfit',
-        imageData,
-        description: '', // v2.3: text description of the outfit
-        target, // 'char' or 'user'
-        createdAt: Date.now(),
-    };
-    settings.wardrobeItems.push(item);
+function addOutfitItem(sys, name, imageData, target = 'char') {
+    const cfg = OUTFIT_SYSTEMS[sys], settings = getSettings();
+    const item = { id: cfg.idPrefix + Date.now() + '_' + Math.random().toString(36).substring(2, 8),
+        name: name || cfg.defaultName, imageData, description: '', target, createdAt: Date.now() };
+    settings[cfg.itemsKey].push(item);
     saveSettings();
     return item;
 }
 
-function removeWardrobeItem(itemId) {
-    const settings = getSettings();
-    if (settings.activeWardrobeChar === itemId) settings.activeWardrobeChar = null;
-    if (settings.activeWardrobeUser === itemId) settings.activeWardrobeUser = null;
-    settings.wardrobeItems = settings.wardrobeItems.filter(w => w.id !== itemId);
+function removeOutfitItem(sys, itemId) {
+    const cfg = OUTFIT_SYSTEMS[sys], settings = getSettings();
+    if (settings[cfg.activeCharKey] === itemId) settings[cfg.activeCharKey] = null;
+    if (settings[cfg.activeUserKey] === itemId) settings[cfg.activeUserKey] = null;
+    settings[cfg.itemsKey] = settings[cfg.itemsKey].filter(i => i.id !== itemId);
     saveSettings();
-    updateWardrobeInjection(); // v2.3: update injection when item removed
+    updateOutfitInjection(sys);
 }
 
-function setActiveWardrobe(itemId, target) {
-    const settings = getSettings();
-    if (target === 'char') {
-        settings.activeWardrobeChar = settings.activeWardrobeChar === itemId ? null : itemId;
-    } else {
-        settings.activeWardrobeUser = settings.activeWardrobeUser === itemId ? null : itemId;
-    }
+function setActiveOutfit(sys, itemId, target) {
+    const cfg = OUTFIT_SYSTEMS[sys], settings = getSettings();
+    const key = target === 'char' ? cfg.activeCharKey : cfg.activeUserKey;
+    settings[key] = settings[key] === itemId ? null : itemId;
     saveSettings();
-    updateWardrobeInjection(); // v2.3: update injection when active outfit changes
+    updateOutfitInjection(sys);
 }
 
-function getActiveWardrobeItem(target) {
-    const settings = getSettings();
-    const activeId = target === 'char' ? settings.activeWardrobeChar : settings.activeWardrobeUser;
-    if (!activeId) return null;
-    return settings.wardrobeItems.find(w => w.id === activeId) || null;
+function getActiveOutfitItem(sys, target) {
+    const cfg = OUTFIT_SYSTEMS[sys], settings = getSettings();
+    const activeId = settings[target === 'char' ? cfg.activeCharKey : cfg.activeUserKey];
+    return activeId ? (settings[cfg.itemsKey].find(i => i.id === activeId) || null) : null;
 }
 
-// v2.3: Update wardrobe item description
-function updateWardrobeItemDescription(itemId, description) {
-    const settings = getSettings();
-    const item = settings.wardrobeItems.find(w => w.id === itemId);
+function updateOutfitItemDescription(sys, itemId, description) {
+    const cfg = OUTFIT_SYSTEMS[sys], settings = getSettings();
+    const item = settings[cfg.itemsKey].find(i => i.id === itemId);
     if (item) {
         item.description = description;
         saveSettings();
-        updateWardrobeInjection(); // update injection when description changes
-        iigLog('INFO', `Updated description for wardrobe item "${item.name}" (${itemId})`);
+        updateOutfitInjection(sys);
+        iigLog('INFO', `Updated ${sys} description for "${item.name}" (${itemId})`);
     }
 }
 
-// ============================================================
-// v2.3: WARDROBE DESCRIPTION GENERATION (Vision API)
-// ============================================================
-
-async function generateWardrobeDescription(itemId) {
-    const settings = getSettings();
-    const item = settings.wardrobeItems.find(w => w.id === itemId);
-    if (!item?.imageData) throw new Error('Нет данных изображения для этого наряда');
-
+async function generateOutfitDescription(sys, itemId) {
+    const cfg = OUTFIT_SYSTEMS[sys], settings = getSettings();
+    const item = settings[cfg.itemsKey].find(i => i.id === itemId);
+    if (!item?.imageData) throw new Error('Нет данных изображения');
     const endpoint = settings.wardrobeDescEndpoint || settings.endpoint;
     const apiKey = settings.wardrobeDescApiKey || settings.apiKey;
     const model = settings.wardrobeDescModel;
-
     if (!endpoint) throw new Error('Не настроен эндпоинт для генерации описаний');
-    if (!apiKey) throw new Error('Не настроен API ключ для генерации описаний');
-    if (!model) throw new Error('Не выбрана модель для генерации описаний');
-
-    const url = `${endpoint.replace(/\/$/, '')}/v1/chat/completions`;
-
-    const promptText = settings.wardrobeDescPrompt || defaultSettings.wardrobeDescPrompt;
-
-    const response = await fetch(url, {
+    if (!apiKey) throw new Error('Не настроен API ключ');
+    if (!model) throw new Error('Не выбрана модель');
+    const promptText = settings[cfg.descPromptKey] || defaultSettings[cfg.descPromptKey];
+    const response = await fetch(`${endpoint.replace(/\/$/, '')}/v1/chat/completions`, {
         method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-        },
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            model: model,
-            messages: [{
-                role: 'user',
-                content: [
-                    {
-                        type: 'image_url',
-                        image_url: {
-                            url: `data:image/png;base64,${item.imageData}`
-                        }
-                    },
-                    {
-                        type: 'text',
-                        text: promptText
-                    }
-                ]
-            }],
-            max_tokens: 500,
-            temperature: 0.3,
+            model, max_tokens: 500, temperature: 0.3,
+            messages: [{ role: 'user', content: [
+                { type: 'image_url', image_url: { url: `data:image/png;base64,${item.imageData}` } },
+                { type: 'text', text: promptText }
+            ]}],
         })
     });
-
-    if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        throw new Error(`API ошибка (${response.status}): ${errorText}`);
-    }
-
+    if (!response.ok) throw new Error(`API ошибка (${response.status}): ${await response.text().catch(() => '?')}`);
     const result = await response.json();
     const description = result.choices?.[0]?.message?.content?.trim();
-
     if (!description) throw new Error('Модель вернула пустой ответ');
-
-    iigLog('INFO', `Generated description for "${item.name}": ${description.substring(0, 100)}...`);
+    iigLog('INFO', `Generated ${sys} description for "${item.name}": ${description.substring(0, 100)}...`);
     return description;
 }
 
-// ============================================================
-// v2.3: WARDROBE INJECTION INTO TEXT MODEL
-// ============================================================
-
-function updateWardrobeInjection() {
+function updateOutfitInjection(sys) {
     try {
-        const context = SillyTavern.getContext();
-        const settings = getSettings();
-        const injectionKey = MODULE_NAME + '_wardrobe';
-
-        if (!settings.injectWardrobeToChat) {
-            if (typeof context.setExtensionPrompt === 'function') {
-                context.setExtensionPrompt(injectionKey, '', 0, 0);
-            }
+        const cfg = OUTFIT_SYSTEMS[sys], context = SillyTavern.getContext(), settings = getSettings();
+        if (!settings[cfg.injectEnabledKey]) {
+            if (typeof context.setExtensionPrompt === 'function') context.setExtensionPrompt(cfg.injectionKey, '', 0, 0);
             return;
         }
-
         const parts = [];
-
-        const charItem = getActiveWardrobeItem('char');
-        if (charItem?.description) {
-            const charName = context.characters?.[context.characterId]?.name || 'Character';
-            parts.push(`[${charName} is currently wearing: ${charItem.description}]`);
+        for (const [target, getName] of [['char', () => context.characters?.[context.characterId]?.name || 'Character'], ['user', () => context.name1 || 'User']]) {
+            const item = getActiveOutfitItem(sys, target);
+            if (item?.description) {
+                const name = getName();
+                parts.push(sys === 'wardrobe' ? `[${name} is currently wearing: ${item.description}]` : `[${name}'s current hairstyle shape (hair color unchanged): ${item.description}]`);
+            }
         }
-
-        const userItem = getActiveWardrobeItem('user');
-        if (userItem?.description) {
-            const userName = context.name1 || 'User';
-            parts.push(`[${userName} is currently wearing: ${userItem.description}]`);
-        }
-
-        const injectionText = parts.join('\n');
         const depth = settings.wardrobeInjectionDepth || 1;
-
         if (typeof context.setExtensionPrompt === 'function') {
-            // position: 1 = IN_PROMPT (after main prompt)
-            context.setExtensionPrompt(injectionKey, injectionText, 1, depth);
-            iigLog('INFO', `Wardrobe injection updated (${injectionText.length} chars, depth=${depth})`);
-        } else {
-            iigLog('WARN', 'setExtensionPrompt not available in this ST version');
+            context.setExtensionPrompt(cfg.injectionKey, parts.join('\n'), 1, depth);
         }
-    } catch (error) {
-        iigLog('ERROR', 'Error updating wardrobe injection:', error);
-    }
+    } catch (error) { iigLog('ERROR', `Error updating ${sys} injection:`, error); }
 }
+
+// Legacy aliases for compatibility in buildEnhancedPrompt / collectReferenceImages
+function getActiveWardrobeItem(target) { return getActiveOutfitItem('wardrobe', target); }
+function getActiveHairstyleItem(target) { return getActiveOutfitItem('hairstyle', target); }
+function updateWardrobeInjection() { updateOutfitInjection('wardrobe'); }
+function updateHairstyleInjection() { updateOutfitInjection('hairstyle'); }
 
 // ============================================================
 // NAME DETECTION IN PROMPT
@@ -576,6 +534,36 @@ async function collectReferenceImages(prompt) {
         });
     }
 
+    // v2.4: Hairstyle references
+    const charHairstyleItem = getActiveHairstyleItem('char');
+    if (charHairstyleItem?.imageData) {
+        const context = SillyTavern.getContext();
+        const charName = context.characters?.[context.characterId]?.name || 'Character';
+        let label = `Hairstyle SHAPE reference for ${charName}: "${charHairstyleItem.name}". Copy ONLY the hair shape, length, and styling from this image. Do NOT copy hair color from this reference — keep ${charName}'s ORIGINAL hair color from the character avatar/description.`;
+        if (charHairstyleItem.description) {
+            label += ` Hairstyle description: ${charHairstyleItem.description}`;
+        }
+        references.push({
+            base64: charHairstyleItem.imageData,
+            label,
+            name: `${charName}'s hairstyle`,
+        });
+    }
+    const userHairstyleItem = getActiveHairstyleItem('user');
+    if (userHairstyleItem?.imageData) {
+        const context = SillyTavern.getContext();
+        const userName = context.name1 || 'User';
+        let label = `Hairstyle SHAPE reference for ${userName}: "${userHairstyleItem.name}". Copy ONLY the hair shape, length, and styling from this image. Do NOT copy hair color from this reference — keep ${userName}'s ORIGINAL hair color from the user avatar/description.`;
+        if (userHairstyleItem.description) {
+            label += ` Hairstyle description: ${userHairstyleItem.description}`;
+        }
+        references.push({
+            base64: userHairstyleItem.imageData,
+            label,
+            name: `${userName}'s hairstyle`,
+        });
+    }
+
     iigLog('INFO', `Total reference images: ${references.length}`);
     return references;
 }
@@ -584,127 +572,64 @@ async function collectReferenceImages(prompt) {
 // APPEARANCE EXTRACTION
 // ============================================================
 
-function extractCharacterAppearance() {
+const APPEARANCE_PATTERNS = [
+    /(?:hair|волосы)[:\s]*([^.;,\n]{3,80})/gi, /(?:has|have|with|имеет|с)\s+([a-zA-Zа-яА-Я\s]+(?:hair|волос[ыа]?))/gi,
+    /([a-zA-Zа-яА-Я\-]+(?:\s+[a-zA-Zа-яА-Я\-]+)?)\s+hair/gi, /(?:eyes?|глаза?)[:\s]*([^.;,\n]{3,60})/gi,
+    /([a-zA-Zа-яА-Я\-]+)\s+eyes?/gi, /(?:skin|кожа)[:\s]*([^.;,\n]{3,60})/gi, /([a-zA-Zа-яА-Я\-]+)\s+skin/gi,
+    /(?:height|рост)[:\s]*([^.;,\n]{3,40})/gi, /(?:tall|short|average|высок|низк|средн)[a-zA-Zа-яА-Я]*/gi,
+    /(?:build|телосложени)[:\s]*([^.;,\n]{3,40})/gi,
+    /(?:muscular|slim|athletic|thin|chubby|мускулист|стройн|худ|полн)[a-zA-Zа-яА-Я]*/gi,
+    /(?:looks?|appears?|выгляд)[a-zA-Zа-яА-Я]*\s+(?:like\s+)?(?:a\s+)?(\d+|young|old|teen|adult|молод|стар|подрост|взросл)/gi,
+    /(\d+)\s*(?:years?\s*old|лет|года?)/gi, /(?:features?|черты)[:\s]*([^.;,\n]{3,80})/gi,
+    /(?:face|лицо)[:\s]*([^.;,\n]{3,60})/gi, /(?:ears?|уши|ушки)[:\s]*([^.;,\n]{3,40})/gi,
+    /(?:tail|хвост)[:\s]*([^.;,\n]{3,40})/gi, /(?:horns?|рога?)[:\s]*([^.;,\n]{3,40})/gi,
+    /(?:wings?|крыль[яи])[:\s]*([^.;,\n]{3,40})/gi,
+];
+const APPEARANCE_BLOCK_PATTERNS = [
+    /\[?(?:appearance|внешность|looks?)\]?[:\s]*([^[\]]{10,500})/gi,
+    /\[?(?:physical\s*description|физическое?\s*описание)\]?[:\s]*([^[\]]{10,500})/gi,
+];
+
+function extractAppearanceFromText(text, name, fallbackShort = false) {
     try {
-        const context = SillyTavern.getContext();
-        if (context.characterId === undefined || context.characterId === null) return null;
-        const character = context.characters?.[context.characterId];
-        if (!character?.description) return null;
-
-        const description = character.description;
-        const charName = character.name || 'Character';
-
-        const patterns = [
-            /(?:hair|волосы)[:\s]*([^.;,\n]{3,80})/gi,
-            /(?:has|have|with|имеет|с)\s+([a-zA-Zа-яА-Я\s]+(?:hair|волос[ыа]?))/gi,
-            /([a-zA-Zа-яА-Я\-]+(?:\s+[a-zA-Zа-яА-Я\-]+)?)\s+hair/gi,
-            /(?:eyes?|глаза?)[:\s]*([^.;,\n]{3,60})/gi,
-            /([a-zA-Zа-яА-Я\-]+)\s+eyes?/gi,
-            /(?:skin|кожа)[:\s]*([^.;,\n]{3,60})/gi,
-            /([a-zA-Zа-яА-Я\-]+)\s+skin/gi,
-            /(?:height|рост)[:\s]*([^.;,\n]{3,40})/gi,
-            /(?:tall|short|average|высок|низк|средн)[a-zA-Zа-яА-Я]*/gi,
-            /(?:build|телосложени)[:\s]*([^.;,\n]{3,40})/gi,
-            /(?:muscular|slim|athletic|thin|chubby|мускулист|стройн|худ|полн)[a-zA-Zа-яА-Я]*/gi,
-            /(?:looks?|appears?|выгляд)[a-zA-Zа-яА-Я]*\s+(?:like\s+)?(?:a\s+)?(\d+|young|old|teen|adult|молод|стар|подрост|взросл)/gi,
-            /(\d+)\s*(?:years?\s*old|лет|года?)/gi,
-            /(?:features?|черты)[:\s]*([^.;,\n]{3,80})/gi,
-            /(?:face|лицо)[:\s]*([^.;,\n]{3,60})/gi,
-            /(?:ears?|уши|ушки)[:\s]*([^.;,\n]{3,40})/gi,
-            /(?:tail|хвост)[:\s]*([^.;,\n]{3,40})/gi,
-            /(?:horns?|рога?)[:\s]*([^.;,\n]{3,40})/gi,
-            /(?:wings?|крыль[яи])[:\s]*([^.;,\n]{3,40})/gi,
-        ];
-
-        const foundTraits = [];
-        const seen = new Set();
-        for (const p of patterns) {
-            for (const m of description.matchAll(p)) {
+        if (!text) return null;
+        const foundTraits = [], seen = new Set();
+        for (const p of APPEARANCE_PATTERNS) {
+            p.lastIndex = 0;
+            for (const m of text.matchAll(p)) {
                 const t = (m[1] || m[0]).trim();
                 if (t.length > 2 && !seen.has(t.toLowerCase())) { seen.add(t.toLowerCase()); foundTraits.push(t); }
             }
         }
-
-        const blockPatterns = [
-            /\[?(?:appearance|внешность|looks?)\]?[:\s]*([^[\]]{10,500})/gi,
-            /\[?(?:physical\s*description|физическое?\s*описание)\]?[:\s]*([^[\]]{10,500})/gi,
-        ];
-        for (const p of blockPatterns) {
-            for (const m of description.matchAll(p)) {
+        for (const p of APPEARANCE_BLOCK_PATTERNS) {
+            p.lastIndex = 0;
+            for (const m of text.matchAll(p)) {
                 const b = m[1].trim();
                 if (b.length > 10 && !seen.has(b.toLowerCase())) { seen.add(b.toLowerCase()); foundTraits.push(b); }
             }
         }
-
-        if (foundTraits.length === 0) return null;
-        return `${charName}'s appearance: ${foundTraits.join(', ')}`;
+        if (foundTraits.length === 0) {
+            if (fallbackShort && text.length < 500) return `${name}'s appearance: ${text}`;
+            return null;
+        }
+        return `${name}'s appearance: ${foundTraits.join(', ')}`;
     } catch (error) {
-        iigLog('ERROR', 'Error extracting character appearance:', error);
+        iigLog('ERROR', `Error extracting appearance for ${name}:`, error);
         return null;
     }
 }
 
+function extractCharacterAppearance() {
+    const context = SillyTavern.getContext();
+    if (context.characterId == null) return null;
+    const character = context.characters?.[context.characterId];
+    return character?.description ? extractAppearanceFromText(character.description, character.name || 'Character') : null;
+}
+
 function extractUserAppearance() {
-    try {
-        const context = SillyTavern.getContext();
-        const userName = context.name1 || 'User';
-        let persona = null;
-        if (typeof window.power_user !== 'undefined' && window.power_user.persona_description) {
-            persona = window.power_user.persona_description;
-        }
-        if (!persona) return null;
-
-        const patterns = [
-            /(?:hair|волосы)[:\s]*([^.;,\n]{3,80})/gi,
-            /(?:has|have|with|имеет|с)\s+([a-zA-Zа-яА-Я\s]+(?:hair|волос[ыа]?))/gi,
-            /([a-zA-Zа-яА-Я\-]+(?:\s+[a-zA-Zа-яА-Я\-]+)?)\s+hair/gi,
-            /(?:eyes?|глаза?)[:\s]*([^.;,\n]{3,60})/gi,
-            /([a-zA-Zа-яА-Я\-]+)\s+eyes?/gi,
-            /(?:skin|кожа)[:\s]*([^.;,\n]{3,60})/gi,
-            /([a-zA-Zа-яА-Я\-]+)\s+skin/gi,
-            /(?:height|рост)[:\s]*([^.;,\n]{3,40})/gi,
-            /(?:tall|short|average|высок|низк|средн)[a-zA-Zа-яА-Я]*/gi,
-            /(?:build|телосложени)[:\s]*([^.;,\n]{3,40})/gi,
-            /(?:muscular|slim|athletic|thin|chubby|мускулист|стройн|худ|полн)[a-zA-Zа-яА-Я]*/gi,
-            /(?:looks?|appears?|выгляд)[a-zA-Zа-яА-Я]*\s+(?:like\s+)?(?:a\s+)?(\d+|young|old|teen|adult|молод|стар|подрост|взросл)/gi,
-            /(\d+)\s*(?:years?\s*old|лет|года?)/gi,
-            /(?:features?|черты)[:\s]*([^.;,\n]{3,80})/gi,
-            /(?:face|лицо)[:\s]*([^.;,\n]{3,60})/gi,
-            /(?:ears?|уши|ушки)[:\s]*([^.;,\n]{3,40})/gi,
-            /(?:tail|хвост)[:\s]*([^.;,\n]{3,40})/gi,
-            /(?:horns?|рога?)[:\s]*([^.;,\n]{3,40})/gi,
-            /(?:wings?|крыль[яи])[:\s]*([^.;,\n]{3,40})/gi,
-        ];
-
-        const foundTraits = [];
-        const seen = new Set();
-        for (const p of patterns) {
-            for (const m of persona.matchAll(p)) {
-                const t = (m[1] || m[0]).trim();
-                if (t.length > 2 && !seen.has(t.toLowerCase())) { seen.add(t.toLowerCase()); foundTraits.push(t); }
-            }
-        }
-
-        const blockPatterns = [
-            /\[?(?:appearance|внешность|looks?)\]?[:\s]*([^[\]]{10,500})/gi,
-            /\[?(?:physical\s*description|физическое?\s*описание)\]?[:\s]*([^[\]]{10,500})/gi,
-        ];
-        for (const p of blockPatterns) {
-            for (const m of persona.matchAll(p)) {
-                const b = m[1].trim();
-                if (b.length > 10 && !seen.has(b.toLowerCase())) { seen.add(b.toLowerCase()); foundTraits.push(b); }
-            }
-        }
-
-        if (foundTraits.length === 0) {
-            if (persona.length < 500) return `${userName}'s appearance: ${persona}`;
-            return null;
-        }
-        return `${userName}'s appearance: ${foundTraits.join(', ')}`;
-    } catch (error) {
-        iigLog('ERROR', 'Error extracting user appearance:', error);
-        return null;
-    }
+    const context = SillyTavern.getContext();
+    const persona = (typeof window.power_user !== 'undefined') ? window.power_user.persona_description : null;
+    return persona ? extractAppearanceFromText(persona, context.name1 || 'User', true) : null;
 }
 
 function getNpcAppearance(npcId) {
@@ -785,16 +710,18 @@ function buildEnhancedPrompt(basePrompt, style, options = {}) {
     const settings = context.extensionSettings[MODULE_NAME] || {};
     const promptParts = [];
 
-    if (settings.fixedStyleEnabled === true && settings.fixedStyle?.trim()) {
-        promptParts.push(`[STYLE: ${settings.fixedStyle.trim()}]`);
-    }
+    // Определяем активный стиль: фиксированный (приоритет) или из тега
+    const useFixedStyle = settings.fixedStyleEnabled === true && settings.fixedStyle?.trim();
+    const activeStyle = useFixedStyle ? settings.fixedStyle.trim() : (style || '');
 
-    if (settings.positivePrompt?.trim()) {
-        promptParts.push(settings.positivePrompt.trim());
-    }
+    // ===== БЛОК 1: АВАТАРКИ И ВНЕШНОСТЬ (наивысший приоритет) =====
 
-    if (style && !(settings.fixedStyleEnabled === true && settings.fixedStyle?.trim())) {
-        promptParts.push(`[Style: ${style}]`);
+    // Инструкция по референсным изображениям — самая первая
+    if (options._referenceLabels?.length > 0) {
+        const labelsText = options._referenceLabels.map((ref, i) =>
+            `Reference image ${i + 1}: ${ref.label} (${ref.name})`
+        ).join('; ');
+        promptParts.push(`[HIGHEST PRIORITY — REFERENCE IMAGES: The reference images provided above show EXACT appearances that MUST be followed. ${labelsText}. You MUST precisely copy their face structure, eye color, hair color and style, skin tone, body type, and all distinctive features from these references. Character likeness takes absolute priority over style.]`);
     }
 
     if (settings.extractAppearance === true) {
@@ -813,11 +740,6 @@ function buildEnhancedPrompt(basePrompt, style, options = {}) {
             const npcAppearance = getNpcAppearance(npcId);
             if (npcAppearance) promptParts.push(`[NPC Reference: ${npcAppearance}]`);
         }
-    }
-
-    if (settings.detectClothing === true) {
-        const clothing = detectClothingFromChat(settings.clothingSearchDepth || 5);
-        if (clothing) promptParts.push(`[Current Clothing: ${clothing}]`);
     }
 
     // Wardrobe clothing instructions (v2.3: now includes text description)
@@ -842,21 +764,59 @@ function buildEnhancedPrompt(basePrompt, style, options = {}) {
         promptParts.push(wardrobeInstruction);
     }
 
-    if (options._referenceLabels?.length > 0) {
-        const labelsText = options._referenceLabels.map((ref, i) =>
-            `Reference image ${i + 1}: ${ref.label} (${ref.name})`
-        ).join('; ');
-        promptParts.push(`[CRITICAL: The reference images provided above show EXACT appearances. ${labelsText}. You MUST precisely copy their face structure, eye color, hair color and style, skin tone, body type, and all distinctive features from these references.]`);
+    if (settings.detectClothing === true) {
+        const clothing = detectClothingFromChat(settings.clothingSearchDepth || 5);
+        if (clothing) promptParts.push(`[Current Clothing: ${clothing}]`);
     }
 
+    // v2.4: Hairstyle instructions
+    const charHairstyleItem = getActiveHairstyleItem('char');
+    if (charHairstyleItem) {
+        const charName = context.characters?.[context.characterId]?.name || 'Character';
+        let hairstyleInstruction = `[HAIRSTYLE SHAPE OVERRIDE for ${charName}: Copy ONLY the hair shape, length, cut, and styling from the hairstyle reference image "${charHairstyleItem.name}". CRITICAL: Do NOT change ${charName}'s hair color — preserve the ORIGINAL hair color from the character's avatar and description. Only the hairstyle shape/form changes, not the color.`;
+        if (charHairstyleItem.description) {
+            hairstyleInstruction += ` Hairstyle description: ${charHairstyleItem.description}`;
+        }
+        hairstyleInstruction += ']';
+        promptParts.push(hairstyleInstruction);
+    }
+    const userHairstyleItem = getActiveHairstyleItem('user');
+    if (userHairstyleItem) {
+        const userName = context.name1 || 'User';
+        let hairstyleInstruction = `[HAIRSTYLE SHAPE OVERRIDE for ${userName}: Copy ONLY the hair shape, length, cut, and styling from the hairstyle reference image "${userHairstyleItem.name}". CRITICAL: Do NOT change ${userName}'s hair color — preserve the ORIGINAL hair color from the user's avatar and description. Only the hairstyle shape/form changes, not the color.`;
+        if (userHairstyleItem.description) {
+            hairstyleInstruction += ` Hairstyle description: ${userHairstyleItem.description}`;
+        }
+        hairstyleInstruction += ']';
+        promptParts.push(hairstyleInstruction);
+    }
+
+    // ===== БЛОК 2: СТИЛЬ (после аватарок, но до промпта сцены) =====
+
+    if (activeStyle) {
+        promptParts.push(`[MANDATORY ART STYLE — follow strictly throughout the ENTIRE image, but preserve character likeness from references above: ${activeStyle}]`);
+    }
+
+    if (settings.positivePrompt?.trim()) {
+        promptParts.push(settings.positivePrompt.trim());
+    }
+
+    // ===== БЛОК 3: ПРОМПТ СЦЕНЫ =====
+
     promptParts.push(basePrompt);
+
+    // ===== БЛОК 4: НАПОМИНАНИЕ СТИЛЯ В КОНЦЕ =====
+
+    if (activeStyle) {
+        promptParts.push(`[STYLE REMINDER — render the entire image in this style: ${activeStyle}]`);
+    }
 
     if (settings.negativePrompt?.trim()) {
         promptParts.push(`[AVOID: ${settings.negativePrompt.trim()}]`);
     }
 
     const fullPrompt = promptParts.join('\n\n');
-    iigLog('INFO', `Built enhanced prompt (${fullPrompt.length} chars, ${promptParts.length} parts)`);
+    iigLog('INFO', `Built enhanced prompt (${fullPrompt.length} chars, ${promptParts.length} parts, style=${activeStyle ? 'YES' : 'none'})`);
     return fullPrompt;
 }
 
@@ -885,14 +845,18 @@ async function generateImageOpenAI(prompt, style, references = [], options = {})
         response_format: 'b64_json'
     };
 
-    if (references.length > 0) {
+    // v2.4: Отправляем ВСЕ референсы, а не только первый
+    if (references.length === 1) {
         body.image = `data:image/png;base64,${references[0].base64}`;
+    } else if (references.length > 1) {
+        body.image = references.map(ref => `data:image/png;base64,${ref.base64}`);
     }
 
     const response = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${settings.apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: options.signal, // v2.4: AbortController support
     });
 
     if (!response.ok) throw new Error(`API Error (${response.status}): ${await response.text()}`);
@@ -930,15 +894,27 @@ async function generateImageGemini(prompt, style, references = [], options = {})
     const fullPrompt = buildEnhancedPrompt(prompt, style, { ...options, _referenceLabels: references });
     parts.push({ text: fullPrompt });
 
+    // Определяем активный стиль для системной инструкции
+    const useFixedStyle = settings.fixedStyleEnabled === true && settings.fixedStyle?.trim();
+    const activeStyle = useFixedStyle ? settings.fixedStyle.trim() : (style || '');
+
     const body = {
         contents: [{ role: 'user', parts }],
         generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio, imageSize } }
     };
 
+    // Добавляем системную инструкцию со стилем, если он задан
+    if (activeStyle) {
+        body.systemInstruction = {
+            parts: [{ text: `You are an image generation assistant. ALL images you generate MUST strictly follow this art style: ${activeStyle}. However, character likeness from reference images takes absolute priority — never sacrifice facial features, body type, or distinctive traits for the sake of style. Apply the style to rendering technique, lighting, color palette, and atmosphere while preserving exact character appearances.` }]
+        };
+    }
+
     const response = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${settings.apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: options.signal, // v2.4: AbortController support
     });
 
     if (!response.ok) throw new Error(`API Error (${response.status}): ${await response.text()}`);
@@ -967,29 +943,67 @@ function validateSettings() {
     if (errors.length > 0) throw new Error(`Ошибка настроек: ${errors.join(', ')}`);
 }
 
+// v2.4: Принимает предсобранные references (баг 3), поддерживает signal и таймаут
 async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {}) {
     validateSettings();
     const settings = getSettings();
 
-    onStatusUpdate?.('Сбор референсов...');
-    const references = await collectReferenceImages(prompt);
+    // Если референсы не переданы снаружи — собираем (обратная совместимость)
+    let references = options.references;
+    if (!references) {
+        onStatusUpdate?.('Сбор референсов...');
+        references = await collectReferenceImages(prompt);
+    }
+
+    // v2.4: Таймаут через AbortController
+    const timeoutMs = (settings.requestTimeout || 120) * 1000;
+    const externalSignal = options.signal; // от кнопки отмены
 
     let lastError;
     for (let attempt = 0; attempt <= settings.maxRetries; attempt++) {
+        // Создаём AbortController для таймаута на каждую попытку
+        const timeoutController = new AbortController();
+        const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+
+        // Если есть внешний signal (кнопка отмены) — связываем с таймаутом
+        const onExternalAbort = () => timeoutController.abort();
+        externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
+
         try {
+            // Проверяем отмену перед началом
+            if (externalSignal?.aborted) throw new DOMException('Отменено пользователем', 'AbortError');
+
             onStatusUpdate?.(`Генерация${attempt > 0 ? ` (повтор ${attempt}/${settings.maxRetries})` : ''}...`);
+            const genOptions = { ...options, signal: timeoutController.signal, references };
+
+            let result;
             if (settings.apiType === 'gemini' || isGeminiModel(settings.model)) {
-                return await generateImageGemini(prompt, style, references, options);
+                result = await generateImageGemini(prompt, style, references, genOptions);
             } else {
-                return await generateImageOpenAI(prompt, style, references, options);
+                result = await generateImageOpenAI(prompt, style, references, genOptions);
             }
+            return result;
         } catch (error) {
             lastError = error;
+
+            // Отмена пользователем — не повторяем
+            if (error.name === 'AbortError') {
+                if (externalSignal?.aborted) {
+                    lastError = new Error('Отменено пользователем');
+                } else {
+                    lastError = new Error(`Таймаут: сервер не ответил за ${settings.requestTimeout}с`);
+                }
+                break;
+            }
+
             const isRetryable = /429|503|502|504|timeout|network/i.test(error.message);
             if (!isRetryable || attempt === settings.maxRetries) break;
             const delay = settings.retryDelay * Math.pow(2, attempt);
             onStatusUpdate?.(`Повтор через ${delay / 1000}с...`);
             await new Promise(resolve => setTimeout(resolve, delay));
+        } finally {
+            clearTimeout(timeoutId);
+            externalSignal?.removeEventListener('abort', onExternalAbort);
         }
     }
     throw lastError;
@@ -998,6 +1012,7 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
 // ============================================================
 // TAG PARSING
 // ============================================================
+
 async function checkFileExists(path) {
     try { return (await fetch(path, { method: 'HEAD' })).ok; } catch (e) { return false; }
 }
@@ -1092,7 +1107,27 @@ async function parseImageTags(text, options = {}) {
         const tagOnly = text.substring(markerIndex, jsonEnd + 1);
         const jsonStr = text.substring(jsonStart, jsonEnd);
         try {
-            const data = JSON.parse(jsonStr.replace(/'/g, '"'));
+            // v2.4: Сначала пробуем парсить как есть (нормальный JSON с двойными кавычками)
+            let data;
+            try {
+                data = JSON.parse(jsonStr);
+            } catch (_) {
+                // Если не вышло — пробуем умную замену одинарных кавычек на двойные,
+                // но только тех, что являются JSON-разделителями, а не апострофами в тексте.
+                // Заменяем ' на " только если ' стоит рядом с : { } , [ ] или в начале/конце
+                const fixed = jsonStr.replace(/'/g, '"');
+                try {
+                    data = JSON.parse(fixed);
+                } catch (__) {
+                    // Последняя попытка: парсим через relaxed-режим
+                    const relaxed = jsonStr
+                        .replace(/^\s*\{\s*/, '{')
+                        .replace(/\s*\}\s*$/, '}')
+                        .replace(/(\w+)\s*:/g, '"$1":')
+                        .replace(/:\s*'([^']*)'/g, ':"$1"');
+                    data = JSON.parse(relaxed);
+                }
+            }
             tags.push({
                 fullMatch: tagOnly, index: markerIndex,
                 style: data.style || '', prompt: data.prompt || '',
@@ -1111,11 +1146,30 @@ async function parseImageTags(text, options = {}) {
 // DOM HELPERS
 // ============================================================
 
-function createLoadingPlaceholder(tagId) {
+function createLoadingPlaceholder(tagId, onCancel) {
     const el = document.createElement('div');
     el.className = 'iig-loading-placeholder';
     el.dataset.tagId = tagId;
+    el.style.cssText = 'position: relative; min-height: 80px;';
     el.innerHTML = `<div class="iig-spinner"></div><div class="iig-status">Генерация картинки...</div>`;
+    if (onCancel) {
+        const x = document.createElement('div');
+        x.className = 'iig-cancel-x';
+        x.title = 'Отменить генерацию';
+        x.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+        x.style.cssText = 'position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0.5; border-radius: 50%; background: var(--SmartThemeBotMesBlurTintColor, rgba(0,0,0,0.4)); color: var(--SmartThemeBodyColor, #fff); font-size: 12px; z-index: 1;';
+        x.addEventListener('mouseenter', () => { x.style.opacity = '1'; });
+        x.addEventListener('mouseleave', () => { x.style.opacity = '0.5'; });
+        x.addEventListener('click', (e) => {
+            e.stopPropagation();
+            onCancel();
+            x.style.pointerEvents = 'none';
+            x.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+            const statusEl = el.querySelector('.iig-status');
+            if (statusEl) statusEl.textContent = 'Отмена...';
+        });
+        el.appendChild(x);
+    }
     return el;
 }
 
@@ -1137,6 +1191,86 @@ function createErrorPlaceholder(tagId, errorMessage, tagInfo) {
 // MESSAGE PROCESSING
 // ============================================================
 
+// Оборачивает картинку в контейнер с кнопкой перегенерации
+function wrapImageWithRegen(img, messageId, tagIndex) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'iig-image-wrapper';
+    wrapper.style.cssText = 'position: relative; display: inline-block;';
+
+    const regenBtn = document.createElement('div');
+    regenBtn.className = 'iig-single-regen';
+    regenBtn.title = 'Перегенерировать эту картинку';
+    regenBtn.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i>';
+    regenBtn.style.cssText = 'position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; display: none; align-items: center; justify-content: center; cursor: pointer; border-radius: 50%; background: var(--SmartThemeBotMesBlurTintColor, rgba(0,0,0,0.5)); color: var(--SmartThemeBodyColor, #fff); font-size: 13px; z-index: 1; transition: opacity 0.15s;';
+    regenBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await regenerateSingleImage(messageId, tagIndex);
+    });
+
+    wrapper.addEventListener('mouseenter', () => { regenBtn.style.display = 'flex'; });
+    wrapper.addEventListener('mouseleave', () => { regenBtn.style.display = 'none'; });
+
+    wrapper.appendChild(regenBtn);
+    wrapper.appendChild(img);
+    return wrapper;
+}
+
+// Перегенерация одного конкретного арта по индексу тега
+async function regenerateSingleImage(messageId, tagIndex) {
+    const context = SillyTavern.getContext();
+    const message = context.chat[messageId];
+    if (!message) { toastr.error('Сообщение не найдено'); return; }
+
+    const tags = await parseImageTags(message.mes, { forceAll: true });
+    if (!tags[tagIndex]) { toastr.error('Тег не найден'); return; }
+    const tag = tags[tagIndex];
+
+    const messageElement = document.querySelector(`#chat .mes[mesid="${messageId}"]`);
+    if (!messageElement) return;
+    const mesTextEl = messageElement.querySelector('.mes_text');
+    if (!mesTextEl) return;
+
+    // Ищем wrapper или img по индексу
+    const allWrappers = Array.from(mesTextEl.querySelectorAll('.iig-image-wrapper'));
+    const allImgs = Array.from(mesTextEl.querySelectorAll('img.iig-generated-image, img.iig-error-image, img[data-iig-instruction]'));
+    const targetEl = allWrappers[tagIndex] || allImgs[tagIndex];
+    if (!targetEl) { toastr.error('Картинка не найдена в DOM'); return; }
+
+    const abortController = new AbortController();
+    const lp = createLoadingPlaceholder(`iig-single-${messageId}-${tagIndex}`, () => abortController.abort());
+    targetEl.replaceWith(lp);
+    const statusEl = lp.querySelector('.iig-status');
+
+    let references;
+    try { references = await collectReferenceImages(tag.prompt); } catch (_) { references = []; }
+
+    try {
+        const dataUrl = await generateImageWithRetry(tag.prompt, tag.style, (s) => { if (statusEl) statusEl.textContent = s; }, {
+            aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality,
+            references, signal: abortController.signal,
+        });
+        if (statusEl) statusEl.textContent = 'Сохранение...';
+        const imagePath = await saveImageToFile(dataUrl);
+
+        const img = document.createElement('img');
+        img.className = 'iig-generated-image'; img.src = imagePath; img.alt = tag.prompt;
+        const instrMatch = tag.fullMatch.match(/data-iig-instruction\s*=\s*(['"])([\s\S]*?)\1/i);
+        if (instrMatch) img.setAttribute('data-iig-instruction', instrMatch[2]);
+
+        const wrapped = wrapImageWithRegen(img, messageId, tagIndex);
+        lp.replaceWith(wrapped);
+
+        message.mes = message.mes.replace(tag.fullMatch, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${imagePath}"`));
+        await context.saveChat();
+        toastr.success('Картинка перегенерирована', 'Генерация картинок', { timeOut: 2000 });
+    } catch (error) {
+        iigLog('ERROR', `Single regen failed: ${error.message}`);
+        lp.replaceWith(createErrorPlaceholder(`iig-single-${messageId}-${tagIndex}`, error.message, tag));
+        if (abortController.signal.aborted) toastr.warning('Генерация отменена');
+        else toastr.error(`Ошибка: ${error.message}`);
+    }
+}
+
 async function processMessageTags(messageId) {
     const context = SillyTavern.getContext();
     const settings = getSettings();
@@ -1157,9 +1291,58 @@ async function processMessageTags(messageId) {
     const mesTextEl = messageElement.querySelector('.mes_text');
     if (!mesTextEl) { processingMessages.delete(messageId); return; }
 
-    const processTag = async (tag, index) => {
+    // v2.4: AbortController для всего сообщения (кнопка отмены)
+    const abortController = new AbortController();
+    activeAbortControllers.set(messageId, abortController);
+
+    // v2.4 (баг 3): Собираем референсы ОДИН раз для всех тегов
+    let sharedReferences;
+    try {
+        sharedReferences = await collectReferenceImages(tags[0].prompt);
+    } catch (e) {
+        sharedReferences = [];
+        iigLog('WARN', 'Failed to collect references:', e.message);
+    }
+
+    // v2.4 (баг 6): Подготавливаем плейсхолдеры для legacy тегов через DOM-безопасный метод
+    // Вместо innerHTML перезаписи используем TreeWalker
+    for (let i = 0; i < tags.length; i++) {
+        const tag = tags[i];
+        if (!tag.isNewFormat) {
+            const walker = document.createTreeWalker(mesTextEl, NodeFilter.SHOW_TEXT, null);
+            let textNode;
+            while ((textNode = walker.nextNode())) {
+                const pos = textNode.textContent.indexOf(tag.fullMatch);
+                if (pos !== -1) {
+                    // Разрезаем текстовый узел и вставляем span-плейсхолдер
+                    const beforeText = textNode.textContent.substring(0, pos);
+                    const afterText = textNode.textContent.substring(pos + tag.fullMatch.length);
+                    const placeholder = document.createElement('span');
+                    placeholder.dataset.iigPlaceholder = `iig-${messageId}-${i}`;
+                    const parent = textNode.parentNode;
+                    if (beforeText) parent.insertBefore(document.createTextNode(beforeText), textNode);
+                    parent.insertBefore(placeholder, textNode);
+                    if (afterText) parent.insertBefore(document.createTextNode(afterText), textNode);
+                    parent.removeChild(textNode);
+                    tag._placeholderEl = placeholder;
+                    break;
+                }
+            }
+        }
+    }
+
+    // v2.4 (баг 4): Последовательная генерация вместо Promise.all
+    for (let index = 0; index < tags.length; index++) {
+        if (abortController.signal.aborted) break;
+
+        const tag = tags[index];
         const tagId = `iig-${messageId}-${index}`;
-        const loadingPlaceholder = createLoadingPlaceholder(tagId);
+
+        // Кнопка отмены привязана к общему AbortController
+        const loadingPlaceholder = createLoadingPlaceholder(tagId, () => {
+            abortController.abort();
+        });
+
         let targetElement = null;
 
         if (tag.isNewFormat) {
@@ -1170,7 +1353,9 @@ async function processMessageTags(messageId) {
                 if (instr) {
                     const decoded = instr.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#39;/g, "'").replace(/&#34;/g, '"').replace(/&amp;/g, '&');
                     if (decoded.includes(searchPrompt)) { targetElement = img; break; }
-                    try { const d = JSON.parse(decoded.replace(/'/g, '"')); if (d.prompt?.substring(0, 30) === tag.prompt.substring(0, 30)) { targetElement = img; break; } } catch (e) {}
+                    try { const d = JSON.parse(decoded); if (d.prompt?.substring(0, 30) === tag.prompt.substring(0, 30)) { targetElement = img; break; } } catch (_) {
+                        try { const d = JSON.parse(decoded.replace(/'/g, '"')); if (d.prompt?.substring(0, 30) === tag.prompt.substring(0, 30)) { targetElement = img; break; } } catch (e) {}
+                    }
                     if (instr.includes(searchPrompt)) { targetElement = img; break; }
                 }
             }
@@ -1187,15 +1372,8 @@ async function processMessageTags(messageId) {
                 }
             }
         } else {
-            const esc = tag.fullMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/"/g, '(?:"|&quot;)');
-            const before = mesTextEl.innerHTML;
-            mesTextEl.innerHTML = mesTextEl.innerHTML.replace(new RegExp(esc, 'g'), `<span data-iig-placeholder="${tagId}"></span>`);
-            if (before !== mesTextEl.innerHTML) targetElement = mesTextEl.querySelector(`[data-iig-placeholder="${tagId}"]`);
-            if (!targetElement) {
-                for (const img of mesTextEl.querySelectorAll('img')) {
-                    if (img.src?.includes('[IMG:GEN:')) { targetElement = img; break; }
-                }
-            }
+            // v2.4 (баг 6): используем уже подготовленный плейсхолдер
+            targetElement = tag._placeholderEl || null;
         }
 
         if (targetElement) targetElement.replaceWith(loadingPlaceholder);
@@ -1203,13 +1381,18 @@ async function processMessageTags(messageId) {
 
         const statusEl = loadingPlaceholder.querySelector('.iig-status');
         try {
-            const dataUrl = await generateImageWithRetry(tag.prompt, tag.style, (s) => { statusEl.textContent = s; }, { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality });
-            statusEl.textContent = 'Сохранение...';
+            const dataUrl = await generateImageWithRetry(tag.prompt, tag.style, (s) => { if (statusEl) statusEl.textContent = s; }, {
+                aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality,
+                references: sharedReferences, // v2.4: общие референсы
+                signal: abortController.signal, // v2.4: кнопка отмены
+            });
+            if (statusEl) statusEl.textContent = 'Сохранение...';
             const imagePath = await saveImageToFile(dataUrl);
             const img = document.createElement('img');
             img.className = 'iig-generated-image'; img.src = imagePath; img.alt = tag.prompt;
             if (tag.isNewFormat) { const m = tag.fullMatch.match(/data-iig-instruction\s*=\s*(['"])([\s\S]*?)\1/i); if (m) img.setAttribute('data-iig-instruction', m[2]); }
-            loadingPlaceholder.replaceWith(img);
+            const wrapped = wrapImageWithRegen(img, messageId, index);
+            loadingPlaceholder.replaceWith(wrapped);
             if (tag.isNewFormat) { message.mes = message.mes.replace(tag.fullMatch, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${imagePath}"`)); }
             else { message.mes = message.mes.replace(tag.fullMatch, `[IMG:✓:${imagePath}]`); }
             toastr.success(`Картинка ${index + 1}/${tags.length} готова`, 'Генерация картинок', { timeOut: 2000 });
@@ -1218,12 +1401,17 @@ async function processMessageTags(messageId) {
             loadingPlaceholder.replaceWith(createErrorPlaceholder(tagId, error.message, tag));
             if (tag.isNewFormat) { message.mes = message.mes.replace(tag.fullMatch, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${ERROR_IMAGE_PATH}"`)); }
             else { message.mes = message.mes.replace(tag.fullMatch, `[IMG:ERROR:${error.message.substring(0, 50)}]`); }
+            // Если отмена — прекращаем все оставшиеся теги
+            if (abortController.signal.aborted) {
+                toastr.warning('Генерация отменена', 'Генерация картинок');
+                break;
+            }
             toastr.error(`Ошибка генерации: ${error.message}`, 'Генерация картинок');
         }
-    };
+    }
 
-    try { await Promise.all(tags.map((tag, i) => processTag(tag, i))); }
-    finally { processingMessages.delete(messageId); }
+    processingMessages.delete(messageId);
+    activeAbortControllers.delete(messageId);
     await context.saveChat();
     if (typeof context.messageFormatting === 'function') {
         mesTextEl.innerHTML = context.messageFormatting(message.mes, message.name, message.is_system, message.is_user, messageId);
@@ -1243,28 +1431,71 @@ async function regenerateMessageImages(messageId) {
     const mesTextEl = messageElement.querySelector('.mes_text');
     if (!mesTextEl) { processingMessages.delete(messageId); return; }
 
+    // v2.4: AbortController для кнопки отмены
+    const abortController = new AbortController();
+    activeAbortControllers.set(messageId, abortController);
+
+    // v2.4 (баг 3): общие референсы
+    let sharedReferences;
+    try {
+        sharedReferences = await collectReferenceImages(tags[0].prompt);
+    } catch (e) {
+        sharedReferences = [];
+    }
+
+    // Собираем обёртки (.iig-image-wrapper) или голые img по порядку
+    const allWrappers = Array.from(mesTextEl.querySelectorAll('.iig-image-wrapper'));
+    const allBareImgs = Array.from(mesTextEl.querySelectorAll('img[data-iig-instruction], img.iig-generated-image, img.iig-error-image'));
+    // Если есть wrappers — используем их; иначе голые img
+    const targetPool = allWrappers.length >= tags.length ? allWrappers :
+        allWrappers.length > 0 ? allWrappers : allBareImgs;
+
     for (let index = 0; index < tags.length; index++) {
+        if (abortController.signal.aborted) break;
+
         const tag = tags[index];
+        const targetEl = targetPool[index] || null;
+
+        if (!targetEl) {
+            iigLog('WARN', `No matching element for tag ${index}, skipping regen`);
+            continue;
+        }
+
+        // Достаём instruction из img (может быть внутри wrapper или быть самим элементом)
+        const innerImg = targetEl.querySelector?.('img[data-iig-instruction]') || targetEl;
+
         try {
-            const existingImg = mesTextEl.querySelector('img[data-iig-instruction]');
-            if (existingImg) {
-                const instruction = existingImg.getAttribute('data-iig-instruction');
-                const lp = createLoadingPlaceholder(`iig-regen-${messageId}-${index}`);
-                existingImg.replaceWith(lp);
-                const statusEl = lp.querySelector('.iig-status');
-                const dataUrl = await generateImageWithRetry(tag.prompt, tag.style, (s) => { statusEl.textContent = s; }, { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality });
-                statusEl.textContent = 'Сохранение...';
-                const imagePath = await saveImageToFile(dataUrl);
-                const img = document.createElement('img');
-                img.className = 'iig-generated-image'; img.src = imagePath; img.alt = tag.prompt;
-                if (instruction) img.setAttribute('data-iig-instruction', instruction);
-                lp.replaceWith(img);
-                message.mes = message.mes.replace(tag.fullMatch, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${imagePath}"`));
-                toastr.success(`Картинка ${index + 1}/${tags.length} готова`, 'Генерация картинок', { timeOut: 2000 });
+            const instruction = innerImg.getAttribute?.('data-iig-instruction');
+            const lp = createLoadingPlaceholder(`iig-regen-${messageId}-${index}`, () => {
+                abortController.abort();
+            });
+            targetEl.replaceWith(lp);
+            const statusEl = lp.querySelector('.iig-status');
+            const dataUrl = await generateImageWithRetry(tag.prompt, tag.style, (s) => { if (statusEl) statusEl.textContent = s; }, {
+                aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality,
+                references: sharedReferences,
+                signal: abortController.signal,
+            });
+            if (statusEl) statusEl.textContent = 'Сохранение...';
+            const imagePath = await saveImageToFile(dataUrl);
+            const img = document.createElement('img');
+            img.className = 'iig-generated-image'; img.src = imagePath; img.alt = tag.prompt;
+            if (instruction) img.setAttribute('data-iig-instruction', instruction);
+            const wrapped = wrapImageWithRegen(img, messageId, index);
+            lp.replaceWith(wrapped);
+            message.mes = message.mes.replace(tag.fullMatch, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${imagePath}"`));
+            toastr.success(`Картинка ${index + 1}/${tags.length} готова`, 'Генерация картинок', { timeOut: 2000 });
+        } catch (error) {
+            iigLog('ERROR', `Regen failed for tag ${index}: ${error.message}`);
+            if (abortController.signal.aborted) {
+                toastr.warning('Перегенерация отменена', 'Генерация картинок');
+                break;
             }
-        } catch (error) { toastr.error(`Ошибка: ${error.message}`); }
+            toastr.error(`Ошибка: ${error.message}`);
+        }
     }
     processingMessages.delete(messageId);
+    activeAbortControllers.delete(messageId);
     await context.saveChat();
 }
 
@@ -1398,162 +1629,121 @@ function updateUserAvatarPreview() {
 }
 
 // ============================================================
-// WARDROBE UI
+// GENERIC OUTFIT UI (wardrobe + hairstyle grids & panels)
 // ============================================================
 
-function renderWardrobeGrid(target) {
-    const settings = getSettings();
-    const containerId = target === 'char' ? 'iig_wardrobe_char' : 'iig_wardrobe_user';
-    const container = document.getElementById(containerId);
-    if (!container) return;
+const OUTFIT_UI = {
+    wardrobe: { prefix: 'iig_wardrobe', icon: 'fa-shirt', emptyText: 'Нет одежды. Нажмите + чтобы добавить.', deleteMsg: 'Одежда удалена',
+        placeholder: 'Введите описание одежды вручную или сгенерируйте через AI...', saveMsg: 'Описание сохранено', clearMsg: 'Описание очищено', genMsg: 'Описание сгенерировано через AI' },
+    hairstyle: { prefix: 'iig_hairstyle', icon: 'fa-scissors', emptyText: 'Нет причёсок. Нажмите + чтобы добавить.', deleteMsg: 'Причёска удалена',
+        placeholder: 'Введите описание причёски вручную или сгенерируйте через AI...', saveMsg: 'Описание причёски сохранено', clearMsg: 'Описание причёски очищено', genMsg: 'Описание причёски сгенерировано через AI' },
+};
 
-    const items = settings.wardrobeItems.filter(w => w.target === target);
-    const activeId = target === 'char' ? settings.activeWardrobeChar : settings.activeWardrobeUser;
+function renderOutfitGrid(sys, target) {
+    const ui = OUTFIT_UI[sys], cfg = OUTFIT_SYSTEMS[sys], settings = getSettings();
+    const container = document.getElementById(`${ui.prefix}_${target}`);
+    if (!container) return;
+    const items = settings[cfg.itemsKey].filter(i => i.target === target);
+    const activeId = settings[target === 'char' ? cfg.activeCharKey : cfg.activeUserKey];
 
     if (items.length === 0) {
-        container.innerHTML = `<div class="iig-wardrobe-empty">Нет одежды. Нажмите + чтобы добавить.</div>`;
-        renderWardrobeDescriptionPanel(target); // v2.3
+        container.innerHTML = `<div class="iig-wardrobe-empty">${ui.emptyText}</div>`;
+        renderOutfitDescriptionPanel(sys, target);
         return;
     }
 
     container.innerHTML = items.map(item => `
-        <div class="iig-wardrobe-card ${item.id === activeId ? 'iig-wardrobe-active' : ''}" data-ward-id="${item.id}" data-ward-target="${target}">
+        <div class="iig-wardrobe-card ${item.id === activeId ? 'iig-wardrobe-active' : ''}" data-outfit-id="${item.id}" data-outfit-target="${target}" data-outfit-sys="${sys}">
             <img src="data:image/png;base64,${item.imageData}" class="iig-wardrobe-img" alt="${item.name}">
             <div class="iig-wardrobe-card-overlay">
                 <span class="iig-wardrobe-card-name" title="${item.name}">${item.name}</span>
                 <div class="iig-wardrobe-card-actions">
                     ${item.description ? '<i class="fa-solid fa-file-lines iig-wardrobe-has-desc" title="Есть описание"></i>' : ''}
-                    <i class="fa-solid fa-trash iig-wardrobe-delete" data-ward-del="${item.id}" title="Удалить"></i>
+                    <i class="fa-solid fa-trash iig-wardrobe-delete" data-outfit-del="${item.id}" title="Удалить"></i>
                 </div>
             </div>
             ${item.id === activeId ? '<div class="iig-wardrobe-check"><i class="fa-solid fa-check"></i></div>' : ''}
         </div>
     `).join('');
 
-    // Bind events
     container.querySelectorAll('.iig-wardrobe-card').forEach(card => {
         card.addEventListener('click', (e) => {
             if (e.target.closest('.iig-wardrobe-delete')) return;
-            const wardId = card.dataset.wardId;
-            const wardTarget = card.dataset.wardTarget;
-            setActiveWardrobe(wardId, wardTarget);
-            renderWardrobeGrid(wardTarget);
+            setActiveOutfit(card.dataset.outfitSys, card.dataset.outfitId, card.dataset.outfitTarget);
+            renderOutfitGrid(card.dataset.outfitSys, card.dataset.outfitTarget);
         });
     });
-
-    container.querySelectorAll('.iig-wardrobe-delete').forEach(btn => {
+    container.querySelectorAll('[data-outfit-del]').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            const wardId = btn.dataset.wardDel;
-            removeWardrobeItem(wardId);
-            renderWardrobeGrid(target);
-            toastr.info('Одежда удалена');
+            removeOutfitItem(sys, btn.dataset.outfitDel);
+            renderOutfitGrid(sys, target);
+            toastr.info(ui.deleteMsg);
         });
     });
-
-    // v2.3: Render description panel for active item
-    renderWardrobeDescriptionPanel(target);
+    renderOutfitDescriptionPanel(sys, target);
 }
 
-// v2.3: Description panel for active wardrobe item
-function renderWardrobeDescriptionPanel(target) {
-    const panelId = `iig_wardrobe_desc_${target}`;
+function renderOutfitDescriptionPanel(sys, target) {
+    const ui = OUTFIT_UI[sys];
+    const panelId = `${ui.prefix}_desc_${target}`;
     let panel = document.getElementById(panelId);
-
-    // Create panel container if it doesn't exist
     if (!panel) {
-        const gridContainer = document.getElementById(target === 'char' ? 'iig_wardrobe_char' : 'iig_wardrobe_user');
-        if (!gridContainer) return;
+        const grid = document.getElementById(`${ui.prefix}_${target}`);
+        if (!grid) return;
         panel = document.createElement('div');
         panel.id = panelId;
         panel.className = 'iig-wardrobe-desc-panel';
-        // Insert after the grid container
-        gridContainer.parentNode.insertBefore(panel, gridContainer.nextSibling);
+        grid.parentNode.insertBefore(panel, grid.nextSibling);
     }
-
-    const activeItem = getActiveWardrobeItem(target);
-
-    if (!activeItem) {
-        panel.innerHTML = '';
-        panel.style.display = 'none';
-        return;
-    }
+    const activeItem = getActiveOutfitItem(sys, target);
+    if (!activeItem) { panel.innerHTML = ''; panel.style.display = 'none'; return; }
 
     panel.style.display = 'block';
     panel.innerHTML = `
-        <div class="iig-wardrobe-desc-header">
-            <i class="fa-solid fa-shirt"></i>
-            <span>Описание: <b>${activeItem.name}</b></span>
-        </div>
-        <textarea class="text_pole iig-wardrobe-desc-textarea" rows="3"
-            placeholder="Введите описание одежды вручную или сгенерируйте через AI..."
-            data-ward-id="${activeItem.id}">${activeItem.description || ''}</textarea>
+        <div class="iig-wardrobe-desc-header"><i class="fa-solid ${ui.icon}"></i><span>Описание: <b>${activeItem.name}</b></span></div>
+        <textarea class="text_pole iig-wardrobe-desc-textarea" rows="3" placeholder="${ui.placeholder}" data-outfit-id="${activeItem.id}">${activeItem.description || ''}</textarea>
         <div class="iig-wardrobe-desc-actions">
-            <div class="menu_button iig-wardrobe-desc-generate" data-ward-id="${activeItem.id}" title="Сгенерировать описание через Vision AI">
-                <i class="fa-solid fa-robot"></i> Сгенерировать
-            </div>
-            <div class="menu_button iig-wardrobe-desc-save" data-ward-id="${activeItem.id}" title="Сохранить описание">
-                <i class="fa-solid fa-floppy-disk"></i> Сохранить
-            </div>
-            <div class="menu_button iig-wardrobe-desc-clear" data-ward-id="${activeItem.id}" title="Очистить описание">
-                <i class="fa-solid fa-eraser"></i>
-            </div>
+            <div class="menu_button iig-outfit-desc-generate" data-outfit-id="${activeItem.id}" title="Сгенерировать через Vision AI"><i class="fa-solid fa-robot"></i> Сгенерировать</div>
+            <div class="menu_button iig-outfit-desc-save" data-outfit-id="${activeItem.id}"><i class="fa-solid fa-floppy-disk"></i> Сохранить</div>
+            <div class="menu_button iig-outfit-desc-clear" data-outfit-id="${activeItem.id}"><i class="fa-solid fa-eraser"></i></div>
         </div>
-        <div class="iig-wardrobe-desc-status" id="iig_wardrobe_desc_status_${target}" style="display:none;"></div>
+        <div class="iig-wardrobe-desc-status" id="${ui.prefix}_desc_status_${target}" style="display:none;"></div>
     `;
-
-    // Bind save on textarea blur
     const textarea = panel.querySelector('.iig-wardrobe-desc-textarea');
-    textarea?.addEventListener('blur', () => {
-        const wardId = textarea.dataset.wardId;
-        updateWardrobeItemDescription(wardId, textarea.value);
+    textarea?.addEventListener('blur', () => updateOutfitItemDescription(sys, textarea.dataset.outfitId, textarea.value));
+    panel.querySelector('.iig-outfit-desc-save')?.addEventListener('click', () => {
+        updateOutfitItemDescription(sys, textarea.dataset.outfitId, textarea.value);
+        toastr.success(ui.saveMsg); renderOutfitGrid(sys, target);
     });
-
-    // Save button
-    panel.querySelector('.iig-wardrobe-desc-save')?.addEventListener('click', () => {
-        const wardId = textarea.dataset.wardId;
-        updateWardrobeItemDescription(wardId, textarea.value);
-        toastr.success('Описание сохранено');
-        renderWardrobeGrid(target); // refresh card indicator
+    panel.querySelector('.iig-outfit-desc-clear')?.addEventListener('click', () => {
+        textarea.value = ''; updateOutfitItemDescription(sys, textarea.dataset.outfitId, '');
+        toastr.info(ui.clearMsg); renderOutfitGrid(sys, target);
     });
-
-    // Clear button
-    panel.querySelector('.iig-wardrobe-desc-clear')?.addEventListener('click', () => {
-        textarea.value = '';
-        const wardId = textarea.dataset.wardId;
-        updateWardrobeItemDescription(wardId, '');
-        toastr.info('Описание очищено');
-        renderWardrobeGrid(target);
-    });
-
-    // Generate button
-    panel.querySelector('.iig-wardrobe-desc-generate')?.addEventListener('click', async (e) => {
-        const btn = e.currentTarget;
-        const wardId = btn.dataset.wardId;
-        const statusEl = document.getElementById(`iig_wardrobe_desc_status_${target}`);
-
-        btn.classList.add('disabled');
-        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Генерация...';
+    panel.querySelector('.iig-outfit-desc-generate')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget, itemId = btn.dataset.outfitId;
+        const statusEl = document.getElementById(`${ui.prefix}_desc_status_${target}`);
+        btn.classList.add('disabled'); btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Генерация...';
         if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Отправка картинки vision-модели...'; }
-
         try {
-            const description = await generateWardrobeDescription(wardId);
-            textarea.value = description;
-            updateWardrobeItemDescription(wardId, description);
+            const desc = await generateOutfitDescription(sys, itemId);
+            textarea.value = desc; updateOutfitItemDescription(sys, itemId, desc);
             if (statusEl) { statusEl.textContent = 'Описание сгенерировано!'; statusEl.className = 'iig-wardrobe-desc-status iig-desc-success'; }
-            toastr.success('Описание сгенерировано через AI');
-            renderWardrobeGrid(target);
+            toastr.success(ui.genMsg); renderOutfitGrid(sys, target);
         } catch (error) {
-            iigLog('ERROR', 'Failed to generate wardrobe description:', error);
+            iigLog('ERROR', `Failed to generate ${sys} description:`, error);
             if (statusEl) { statusEl.textContent = `Ошибка: ${error.message}`; statusEl.className = 'iig-wardrobe-desc-status iig-desc-error'; }
-            toastr.error(`Ошибка генерации описания: ${error.message}`);
+            toastr.error(`Ошибка: ${error.message}`);
         } finally {
-            btn.classList.remove('disabled');
-            btn.innerHTML = '<i class="fa-solid fa-robot"></i> Сгенерировать';
+            btn.classList.remove('disabled'); btn.innerHTML = '<i class="fa-solid fa-robot"></i> Сгенерировать';
             setTimeout(() => { if (statusEl) statusEl.style.display = 'none'; }, 5000);
         }
     });
 }
+
+// Legacy aliases
+function renderWardrobeGrid(target) { renderOutfitGrid('wardrobe', target); }
+function renderHairstyleGrid(target) { renderOutfitGrid('hairstyle', target); }
 
 // ============================================================
 // SETTINGS UI
@@ -1787,6 +1977,36 @@ function createSettingsUI() {
         </div>
     `;
 
+    // v2.4: Hairstyle section
+    const hairstyleSectionContent = `
+        <p class="hint">Загрузите картинки с причёсками. Выбранная причёска будет отправлена как референс — модель нарисует персонажа с ней. Описание (вручную или через AI) инжектится в текстовую модель.</p>
+
+        <label class="checkbox_label">
+            <input type="checkbox" id="iig_inject_hairstyle" ${settings.injectHairstyleToChat ? 'checked' : ''}>
+            <span>Инжектить описание причёски в промпт текстовой модели</span>
+        </label>
+
+        <div class="flex-col" style="margin-top: 8px;">
+            <label for="iig_hairstyle_desc_prompt">Промпт для генерации описания причёски</label>
+            <textarea id="iig_hairstyle_desc_prompt" class="text_pole" rows="2" placeholder="Describe this hairstyle...">${settings.hairstyleDescPrompt || defaultSettings.hairstyleDescPrompt}</textarea>
+        </div>
+
+        <h5 style="margin: 10px 0 4px;">Причёска персонажа</h5>
+        <div id="iig_hairstyle_char" class="iig-wardrobe-grid"></div>
+        <div class="iig-wardrobe-add-row">
+            <input type="text" id="iig_hairstyle_char_name" class="text_pole flex1" placeholder="Название причёски">
+            <input type="file" id="iig_hairstyle_char_file" accept="image/*" style="display:none;">
+            <div id="iig_hairstyle_char_add" class="menu_button" title="Добавить причёску"><i class="fa-solid fa-plus"></i> Добавить</div>
+        </div>
+        <h5 style="margin: 14px 0 4px;">Причёска юзера</h5>
+        <div id="iig_hairstyle_user" class="iig-wardrobe-grid"></div>
+        <div class="iig-wardrobe-add-row">
+            <input type="text" id="iig_hairstyle_user_name" class="text_pole flex1" placeholder="Название причёски">
+            <input type="file" id="iig_hairstyle_user_file" accept="image/*" style="display:none;">
+            <div id="iig_hairstyle_user_add" class="menu_button" title="Добавить причёску"><i class="fa-solid fa-plus"></i> Добавить</div>
+        </div>
+    `;
+
     const npcSectionContent = `
         <p class="hint">Добавьте NPC с аватарками. При упоминании имени в промпте аватарка будет использована как референс.</p>
         <div id="iig_npc_list"></div>
@@ -1846,6 +2066,11 @@ function createSettingsUI() {
             <label for="iig_retry_delay">Задержка (мс)</label>
             <input type="number" id="iig_retry_delay" class="text_pole flex1" value="${settings.retryDelay}" min="500" max="10000" step="500">
         </div>
+        <div class="flex-row">
+            <label for="iig_request_timeout">Таймаут запроса (сек)</label>
+            <input type="number" id="iig_request_timeout" class="text_pole flex1" value="${settings.requestTimeout || 120}" min="10" max="600" step="10">
+        </div>
+        <p class="hint">Если сервер не ответил за указанное время — запрос отменяется. Кнопка отмены доступна на каждой генерируемой картинке.</p>
     `;
 
     const debugSectionContent = `
@@ -1872,6 +2097,7 @@ function createSettingsUI() {
                     ${createCollapsibleSection('references', '🖼️', 'Референсы аватарок', referencesSectionContent)}
                     ${createCollapsibleSection('wardrobe', '👗', 'Гардероб (одежда)', wardrobeSectionContent)}
                     ${createCollapsibleSection('wardrobe_desc_api', '🤖', 'Описание одежды (Vision API)', wardrobeDescApiSectionContent)}
+                    ${createCollapsibleSection('hairstyles', '💇', 'Причёски', hairstyleSectionContent)}
                     ${createCollapsibleSection('npcs', '🎭', 'NPC / Доп. персонажи', npcSectionContent)}
                     ${createCollapsibleSection('prompts', '✍️', 'Пользовательские промпты', promptsSectionContent)}
                     ${createCollapsibleSection('fixed_style', '🎨', 'Фиксированный стиль', styleSectionContent)}
@@ -1902,6 +2128,8 @@ function createSettingsUI() {
     renderNpcList();
     renderWardrobeGrid('char');
     renderWardrobeGrid('user');
+    renderHairstyleGrid('char');
+    renderHairstyleGrid('user');
     updateCharAvatarPreview();
     updateUserAvatarPreview();
 }
@@ -1993,6 +2221,7 @@ function bindSettingsEvents() {
 
     document.getElementById('iig_max_retries')?.addEventListener('input', (e) => { settings.maxRetries = parseInt(e.target.value) || 0; saveSettings(); });
     document.getElementById('iig_retry_delay')?.addEventListener('input', (e) => { settings.retryDelay = parseInt(e.target.value) || 1000; saveSettings(); });
+    document.getElementById('iig_request_timeout')?.addEventListener('input', (e) => { settings.requestTimeout = parseInt(e.target.value) || 120; saveSettings(); });
     document.getElementById('iig_export_logs')?.addEventListener('click', exportLogs);
 
     document.getElementById('iig_positive_prompt')?.addEventListener('input', (e) => { settings.positivePrompt = e.target.value; saveSettings(); });
@@ -2061,12 +2290,12 @@ function bindSettingsEvents() {
         saveSettings();
     });
 
-    // Wardrobe add buttons
-    const bindWardrobeAdd = (target) => {
-        const addBtn = document.getElementById(`iig_wardrobe_${target}_add`);
-        const fileInput = document.getElementById(`iig_wardrobe_${target}_file`);
-        const nameInput = document.getElementById(`iig_wardrobe_${target}_name`);
-
+    // Generic outfit add buttons (wardrobe + hairstyle)
+    const bindOutfitAdd = (sys, target) => {
+        const ui = OUTFIT_UI[sys], cfg = OUTFIT_SYSTEMS[sys];
+        const addBtn = document.getElementById(`${ui.prefix}_${target}_add`);
+        const fileInput = document.getElementById(`${ui.prefix}_${target}_file`);
+        const nameInput = document.getElementById(`${ui.prefix}_${target}_name`);
         addBtn?.addEventListener('click', () => fileInput?.click());
         fileInput?.addEventListener('change', async (e) => {
             const file = e.target.files[0];
@@ -2074,18 +2303,29 @@ function bindSettingsEvents() {
             const reader = new FileReader();
             reader.onloadend = async () => {
                 const resized = await resizeImageBase64(reader.result.split(',')[1], 512);
-                const name = nameInput?.value?.trim() || file.name.replace(/\.[^.]+$/, '') || 'Outfit';
-                addWardrobeItem(name, resized, target);
+                const name = nameInput?.value?.trim() || file.name.replace(/\.[^.]+$/, '') || cfg.defaultName;
+                addOutfitItem(sys, name, resized, target);
                 if (nameInput) nameInput.value = '';
                 fileInput.value = '';
-                renderWardrobeGrid(target);
-                toastr.success(`Одежда "${name}" добавлена`);
+                renderOutfitGrid(sys, target);
+                toastr.success(`${cfg.defaultName} "${name}" добавлен(а)`);
             };
             reader.readAsDataURL(file);
         });
     };
-    bindWardrobeAdd('char');
-    bindWardrobeAdd('user');
+    for (const sys of ['wardrobe', 'hairstyle']) { bindOutfitAdd(sys, 'char'); bindOutfitAdd(sys, 'user'); }
+
+    // v2.4: Hairstyle events
+    document.getElementById('iig_inject_hairstyle')?.addEventListener('change', (e) => {
+        settings.injectHairstyleToChat = e.target.checked;
+        saveSettings();
+        updateHairstyleInjection();
+    });
+
+    document.getElementById('iig_hairstyle_desc_prompt')?.addEventListener('input', (e) => {
+        settings.hairstyleDescPrompt = e.target.value;
+        saveSettings();
+    });
 }
 
 // ============================================================
@@ -2100,7 +2340,8 @@ function bindSettingsEvents() {
         createSettingsUI();
         addButtonsToExistingMessages();
         updateWardrobeInjection(); // v2.3: initialize wardrobe injection on load
-        console.log('[IIG] Inline Image Generation v2.3 loaded');
+        updateHairstyleInjection(); // v2.4: initialize hairstyle injection on load
+        console.log('[IIG] Inline Image Generation v2.4 loaded');
     });
 
     context.eventSource.on(context.event_types.CHAT_CHANGED, () => {
@@ -2108,6 +2349,7 @@ function bindSettingsEvents() {
             addButtonsToExistingMessages();
             updateCharAvatarPreview();
             updateWardrobeInjection(); // v2.3: re-inject on chat change
+            updateHairstyleInjection(); // v2.4: re-inject hairstyle on chat change
         }, 100);
     });
 
@@ -2115,5 +2357,5 @@ function bindSettingsEvents() {
         await onMessageReceived(messageId);
     });
 
-    console.log('[IIG] Inline Image Generation v2.3 initialized');
+    console.log('[IIG] Inline Image Generation v2.4 initialized');
 })();
