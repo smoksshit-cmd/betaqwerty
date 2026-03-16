@@ -1,0 +1,14 @@
+{
+    "display_name": "MG",
+    "loading_order": 100,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "",
+    "version": "beta 1.1",
+    "homePage": "https://github.com/smoksshit-cmd/sillyimages/",
+    "auto_update": true
+}
+
+
