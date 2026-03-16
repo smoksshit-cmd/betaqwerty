@@ -4,8 +4,9 @@
  * Catches [IMG:GEN:{json}] tags in AI messages and generates images via configured API.
  * Supports OpenAI-compatible and Gemini-compatible (nano-banana) endpoints.
  *
- * v2.4: Bug fixes (multi-ref OpenAI, regen matching, sequential generation,
- *        apostrophe JSON, DOM-safe legacy tags), request timeout, cancel button
+ * v2.5: Style enforcement overhaul — fixed style now dominates the prompt,
+ *        removed positive/negative prompts to reduce noise,
+ *        better avatar reference handling (larger resize), cleaner prompt structure.
  */
 
 const MODULE_NAME = 'inline_image_gen';
@@ -56,8 +57,7 @@ const defaultSettings = Object.freeze({
     userAvatarFile: '',
     aspectRatio: '1:1',
     imageSize: '1K',
-    positivePrompt: '',
-    negativePrompt: '',
+    // v2.5: removed positivePrompt, negativePrompt
     fixedStyle: '',
     fixedStyleEnabled: false,
     extractAppearance: true,
@@ -304,9 +304,10 @@ function getNpcAvatarBase64(npcId) {
 
 // ============================================================
 // RESIZE IMAGE
+// v2.5: Increased default maxSize from 512 to 768 for better ref quality
 // ============================================================
 
-async function resizeImageBase64(base64, maxSize = 512) {
+async function resizeImageBase64(base64, maxSize = 768) {
     return new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
@@ -484,54 +485,46 @@ async function collectReferenceImages(prompt) {
     if (settings.sendCharAvatar || mentions.charMentioned) {
         const charAvatar = await getCharacterAvatarBase64();
         if (charAvatar) {
+            // v2.5: resize to 768 for better quality
+            const resized = await resizeImageBase64(charAvatar, 768);
             const context = SillyTavern.getContext();
             const charName = context.characters?.[context.characterId]?.name || 'Character';
-            references.push({ base64: charAvatar, label: `Reference image of ${charName}`, name: charName });
+            references.push({ base64: resized, label: `Reference photo of ${charName} — copy face, eyes, hair color, skin tone, body type EXACTLY`, name: charName });
         }
     }
 
     if (settings.sendUserAvatar || mentions.userMentioned) {
         const userAvatar = await getUserAvatarBase64();
         if (userAvatar) {
+            const resized = await resizeImageBase64(userAvatar, 768);
             const context = SillyTavern.getContext();
-            references.push({ base64: userAvatar, label: `Reference image of ${context.name1 || 'User'}`, name: context.name1 || 'User' });
+            references.push({ base64: resized, label: `Reference photo of ${context.name1 || 'User'} — copy face, eyes, hair color, skin tone, body type EXACTLY`, name: context.name1 || 'User' });
         }
     }
 
     for (const npcId of mentions.npcIds) {
         const npc = settings.npcList.find(n => n.id === npcId);
         if (!npc?.avatarData || npc.enabled === false) continue;
-        references.push({ base64: npc.avatarData, label: `Reference image of ${npc.name}`, name: npc.name });
+        const resized = await resizeImageBase64(npc.avatarData, 768);
+        references.push({ base64: resized, label: `Reference photo of ${npc.name} — copy appearance EXACTLY`, name: npc.name });
     }
 
-    // Wardrobe clothing references (v2.3: enriched with description)
+    // Wardrobe clothing references
     const charWardrobeItem = getActiveWardrobeItem('char');
     if (charWardrobeItem?.imageData) {
         const context = SillyTavern.getContext();
         const charName = context.characters?.[context.characterId]?.name || 'Character';
-        let label = `Clothing reference for ${charName}: "${charWardrobeItem.name}". ${charName} MUST be wearing exactly this outfit.`;
-        if (charWardrobeItem.description) {
-            label += ` Outfit description: ${charWardrobeItem.description}`;
-        }
-        references.push({
-            base64: charWardrobeItem.imageData,
-            label,
-            name: `${charName}'s outfit`,
-        });
+        let label = `Clothing for ${charName}: "${charWardrobeItem.name}". Dress ${charName} in EXACTLY this outfit.`;
+        if (charWardrobeItem.description) label += ` Description: ${charWardrobeItem.description}`;
+        references.push({ base64: charWardrobeItem.imageData, label, name: `${charName}'s outfit` });
     }
     const userWardrobeItem = getActiveWardrobeItem('user');
     if (userWardrobeItem?.imageData) {
         const context = SillyTavern.getContext();
         const userName = context.name1 || 'User';
-        let label = `Clothing reference for ${userName}: "${userWardrobeItem.name}". ${userName} MUST be wearing exactly this outfit.`;
-        if (userWardrobeItem.description) {
-            label += ` Outfit description: ${userWardrobeItem.description}`;
-        }
-        references.push({
-            base64: userWardrobeItem.imageData,
-            label,
-            name: `${userName}'s outfit`,
-        });
+        let label = `Clothing for ${userName}: "${userWardrobeItem.name}". Dress ${userName} in EXACTLY this outfit.`;
+        if (userWardrobeItem.description) label += ` Description: ${userWardrobeItem.description}`;
+        references.push({ base64: userWardrobeItem.imageData, label, name: `${userName}'s outfit` });
     }
 
     // v2.4: Hairstyle references
@@ -539,29 +532,17 @@ async function collectReferenceImages(prompt) {
     if (charHairstyleItem?.imageData) {
         const context = SillyTavern.getContext();
         const charName = context.characters?.[context.characterId]?.name || 'Character';
-        let label = `Hairstyle SHAPE reference for ${charName}: "${charHairstyleItem.name}". Copy ONLY the hair shape, length, and styling from this image. Do NOT copy hair color from this reference — keep ${charName}'s ORIGINAL hair color from the character avatar/description.`;
-        if (charHairstyleItem.description) {
-            label += ` Hairstyle description: ${charHairstyleItem.description}`;
-        }
-        references.push({
-            base64: charHairstyleItem.imageData,
-            label,
-            name: `${charName}'s hairstyle`,
-        });
+        let label = `Hairstyle SHAPE for ${charName}: "${charHairstyleItem.name}". Copy hair shape/length/styling ONLY, keep ${charName}'s ORIGINAL hair color.`;
+        if (charHairstyleItem.description) label += ` Description: ${charHairstyleItem.description}`;
+        references.push({ base64: charHairstyleItem.imageData, label, name: `${charName}'s hairstyle` });
     }
     const userHairstyleItem = getActiveHairstyleItem('user');
     if (userHairstyleItem?.imageData) {
         const context = SillyTavern.getContext();
         const userName = context.name1 || 'User';
-        let label = `Hairstyle SHAPE reference for ${userName}: "${userHairstyleItem.name}". Copy ONLY the hair shape, length, and styling from this image. Do NOT copy hair color from this reference — keep ${userName}'s ORIGINAL hair color from the user avatar/description.`;
-        if (userHairstyleItem.description) {
-            label += ` Hairstyle description: ${userHairstyleItem.description}`;
-        }
-        references.push({
-            base64: userHairstyleItem.imageData,
-            label,
-            name: `${userName}'s hairstyle`,
-        });
+        let label = `Hairstyle SHAPE for ${userName}: "${userHairstyleItem.name}". Copy hair shape/length/styling ONLY, keep ${userName}'s ORIGINAL hair color.`;
+        if (userHairstyleItem.description) label += ` Description: ${userHairstyleItem.description}`;
+        references.push({ base64: userHairstyleItem.imageData, label, name: `${userName}'s hairstyle` });
     }
 
     iigLog('INFO', `Total reference images: ${references.length}`);
@@ -609,10 +590,10 @@ function extractAppearanceFromText(text, name, fallbackShort = false) {
             }
         }
         if (foundTraits.length === 0) {
-            if (fallbackShort && text.length < 500) return `${name}'s appearance: ${text}`;
+            if (fallbackShort && text.length < 500) return `${name}: ${text}`;
             return null;
         }
-        return `${name}'s appearance: ${foundTraits.join(', ')}`;
+        return `${name}: ${foundTraits.join(', ')}`;
     } catch (error) {
         iigLog('ERROR', `Error extracting appearance for ${name}:`, error);
         return null;
@@ -636,7 +617,7 @@ function getNpcAppearance(npcId) {
     const settings = getSettings();
     const npc = settings.npcList.find(n => n.id === npcId);
     if (!npc?.appearance || npc.enabled === false) return null;
-    return `${npc.name}'s appearance: ${npc.appearance}`;
+    return `${npc.name}: ${npc.appearance}`;
 }
 
 // ============================================================
@@ -692,8 +673,8 @@ function detectClothingFromChat(depth = 5) {
         const userClothing = foundClothing.filter(c => c.speaker === userName).map(c => c.text);
 
         let clothingText = '';
-        if (charClothing.length > 0) clothingText += `${charName} is wearing: ${charClothing.slice(0, 3).join(', ')}. `;
-        if (userClothing.length > 0) clothingText += `${userName} is wearing: ${userClothing.slice(0, 3).join(', ')}.`;
+        if (charClothing.length > 0) clothingText += `${charName} wears: ${charClothing.slice(0, 3).join(', ')}. `;
+        if (userClothing.length > 0) clothingText += `${userName} wears: ${userClothing.slice(0, 3).join(', ')}.`;
         return clothingText.trim() || null;
     } catch (error) {
         iigLog('ERROR', 'Error detecting clothing:', error);
@@ -703,6 +684,7 @@ function detectClothingFromChat(depth = 5) {
 
 // ============================================================
 // ENHANCED PROMPT BUILDER
+// v2.5: Complete rewrite — style is king, prompt is clean
 // ============================================================
 
 function buildEnhancedPrompt(basePrompt, style, options = {}) {
@@ -710,113 +692,101 @@ function buildEnhancedPrompt(basePrompt, style, options = {}) {
     const settings = context.extensionSettings[MODULE_NAME] || {};
     const promptParts = [];
 
-    // Определяем активный стиль: фиксированный (приоритет) или из тега
+    // Determine active style: fixed (priority) or from tag
     const useFixedStyle = settings.fixedStyleEnabled === true && settings.fixedStyle?.trim();
     const activeStyle = useFixedStyle ? settings.fixedStyle.trim() : (style || '');
 
-    // ===== БЛОК 1: АВАТАРКИ И ВНЕШНОСТЬ (наивысший приоритет) =====
+    // ===== BLOCK 1: STYLE — ABSOLUTE TOP PRIORITY =====
+    // v2.5: Style goes FIRST, before everything else, with the strongest possible wording
 
-    // Инструкция по референсным изображениям — самая первая
+    if (activeStyle) {
+        promptParts.push(`[MANDATORY ART STYLE — THIS IS THE #1 RULE FOR THE ENTIRE IMAGE: Render everything in "${activeStyle}" style. Every element — characters, backgrounds, lighting, colors, linework, shading — MUST follow this style. Do NOT use photorealistic/realistic rendering unless the style explicitly says so. This overrides any default model behavior.]`);
+    }
+
+    // ===== BLOCK 2: REFERENCE IMAGES (concise) =====
+
     if (options._referenceLabels?.length > 0) {
         const labelsText = options._referenceLabels.map((ref, i) =>
-            `Reference image ${i + 1}: ${ref.label} (${ref.name})`
+            `Image ${i + 1}: ${ref.label}`
         ).join('; ');
-        promptParts.push(`[HIGHEST PRIORITY — REFERENCE IMAGES: The reference images provided above show EXACT appearances that MUST be followed. ${labelsText}. You MUST precisely copy their face structure, eye color, hair color and style, skin tone, body type, and all distinctive features from these references. Character likeness takes absolute priority over style.]`);
+        promptParts.push(`[REFERENCE IMAGES: ${labelsText}. Copy their exact appearance (face, eyes, hair color, skin, body type) but render them in the art style above.]`);
     }
+
+    // ===== BLOCK 3: APPEARANCE — brief, only key traits =====
 
     if (settings.extractAppearance === true) {
         const charAppearance = extractCharacterAppearance();
-        if (charAppearance) promptParts.push(`[Character Reference: ${charAppearance}]`);
+        if (charAppearance) promptParts.push(`[${charAppearance}]`);
     }
 
     if (settings.extractUserAppearance !== false) {
         const userAppearance = extractUserAppearance();
-        if (userAppearance) promptParts.push(`[User Reference: ${userAppearance}]`);
+        if (userAppearance) promptParts.push(`[${userAppearance}]`);
     }
 
     if (settings.autoDetectNames && settings.npcList?.length > 0) {
         const mentions = detectMentionedCharacters(basePrompt);
         for (const npcId of mentions.npcIds) {
             const npcAppearance = getNpcAppearance(npcId);
-            if (npcAppearance) promptParts.push(`[NPC Reference: ${npcAppearance}]`);
+            if (npcAppearance) promptParts.push(`[${npcAppearance}]`);
         }
     }
 
-    // Wardrobe clothing instructions (v2.3: now includes text description)
+    // Wardrobe override (brief)
     const charWardrobeItem = getActiveWardrobeItem('char');
     if (charWardrobeItem) {
         const charName = context.characters?.[context.characterId]?.name || 'Character';
-        let wardrobeInstruction = `[CLOTHING OVERRIDE for ${charName}: The character MUST be wearing the outfit shown in the clothing reference image "${charWardrobeItem.name}". Ignore any other clothing descriptions — use ONLY the referenced outfit.`;
-        if (charWardrobeItem.description) {
-            wardrobeInstruction += ` Detailed outfit description: ${charWardrobeItem.description}`;
-        }
-        wardrobeInstruction += ']';
-        promptParts.push(wardrobeInstruction);
+        let w = `[${charName} MUST wear: "${charWardrobeItem.name}"`;
+        if (charWardrobeItem.description) w += ` — ${charWardrobeItem.description}`;
+        w += ']';
+        promptParts.push(w);
     }
     const userWardrobeItem = getActiveWardrobeItem('user');
     if (userWardrobeItem) {
         const userName = context.name1 || 'User';
-        let wardrobeInstruction = `[CLOTHING OVERRIDE for ${userName}: This person MUST be wearing the outfit shown in the clothing reference image "${userWardrobeItem.name}". Ignore any other clothing descriptions — use ONLY the referenced outfit.`;
-        if (userWardrobeItem.description) {
-            wardrobeInstruction += ` Detailed outfit description: ${userWardrobeItem.description}`;
-        }
-        wardrobeInstruction += ']';
-        promptParts.push(wardrobeInstruction);
+        let w = `[${userName} MUST wear: "${userWardrobeItem.name}"`;
+        if (userWardrobeItem.description) w += ` — ${userWardrobeItem.description}`;
+        w += ']';
+        promptParts.push(w);
     }
 
+    // Clothing from chat (only if no wardrobe override)
     if (settings.detectClothing === true) {
         const clothing = detectClothingFromChat(settings.clothingSearchDepth || 5);
-        if (clothing) promptParts.push(`[Current Clothing: ${clothing}]`);
+        if (clothing) promptParts.push(`[${clothing}]`);
     }
 
-    // v2.4: Hairstyle instructions
+    // Hairstyle override (brief)
     const charHairstyleItem = getActiveHairstyleItem('char');
     if (charHairstyleItem) {
         const charName = context.characters?.[context.characterId]?.name || 'Character';
-        let hairstyleInstruction = `[HAIRSTYLE SHAPE OVERRIDE for ${charName}: Copy ONLY the hair shape, length, cut, and styling from the hairstyle reference image "${charHairstyleItem.name}". CRITICAL: Do NOT change ${charName}'s hair color — preserve the ORIGINAL hair color from the character's avatar and description. Only the hairstyle shape/form changes, not the color.`;
-        if (charHairstyleItem.description) {
-            hairstyleInstruction += ` Hairstyle description: ${charHairstyleItem.description}`;
-        }
-        hairstyleInstruction += ']';
-        promptParts.push(hairstyleInstruction);
+        let h = `[${charName} hairstyle shape: "${charHairstyleItem.name}" — keep original hair COLOR`;
+        if (charHairstyleItem.description) h += `, shape: ${charHairstyleItem.description}`;
+        h += ']';
+        promptParts.push(h);
     }
     const userHairstyleItem = getActiveHairstyleItem('user');
     if (userHairstyleItem) {
         const userName = context.name1 || 'User';
-        let hairstyleInstruction = `[HAIRSTYLE SHAPE OVERRIDE for ${userName}: Copy ONLY the hair shape, length, cut, and styling from the hairstyle reference image "${userHairstyleItem.name}". CRITICAL: Do NOT change ${userName}'s hair color — preserve the ORIGINAL hair color from the user's avatar and description. Only the hairstyle shape/form changes, not the color.`;
-        if (userHairstyleItem.description) {
-            hairstyleInstruction += ` Hairstyle description: ${userHairstyleItem.description}`;
-        }
-        hairstyleInstruction += ']';
-        promptParts.push(hairstyleInstruction);
+        let h = `[${userName} hairstyle shape: "${userHairstyleItem.name}" — keep original hair COLOR`;
+        if (userHairstyleItem.description) h += `, shape: ${userHairstyleItem.description}`;
+        h += ']';
+        promptParts.push(h);
     }
 
-    // ===== БЛОК 2: СТИЛЬ (после аватарок, но до промпта сцены) =====
-
-    if (activeStyle) {
-        promptParts.push(`[MANDATORY ART STYLE — follow strictly throughout the ENTIRE image, but preserve character likeness from references above: ${activeStyle}]`);
-    }
-
-    if (settings.positivePrompt?.trim()) {
-        promptParts.push(settings.positivePrompt.trim());
-    }
-
-    // ===== БЛОК 3: ПРОМПТ СЦЕНЫ =====
+    // ===== BLOCK 4: SCENE PROMPT =====
 
     promptParts.push(basePrompt);
 
-    // ===== БЛОК 4: НАПОМИНАНИЕ СТИЛЯ В КОНЦЕ =====
+    // ===== BLOCK 5: STYLE REMINDER AT THE END =====
+    // v2.5: Stronger reminder with explicit "not realistic" if style is non-realistic
 
     if (activeStyle) {
-        promptParts.push(`[STYLE REMINDER — render the entire image in this style: ${activeStyle}]`);
-    }
-
-    if (settings.negativePrompt?.trim()) {
-        promptParts.push(`[AVOID: ${settings.negativePrompt.trim()}]`);
+        promptParts.push(`[STYLE ENFORCEMENT: The ENTIRE image must be rendered in "${activeStyle}" style. Do NOT fall back to photorealism or any other default style.]`);
     }
 
     const fullPrompt = promptParts.join('\n\n');
-    iigLog('INFO', `Built enhanced prompt (${fullPrompt.length} chars, ${promptParts.length} parts, style=${activeStyle ? 'YES' : 'none'})`);
+    iigLog('INFO', `Built enhanced prompt (${fullPrompt.length} chars, ${promptParts.length} parts, style=${activeStyle ? `"${activeStyle}"` : 'none'})`);
     return fullPrompt;
 }
 
@@ -845,7 +815,7 @@ async function generateImageOpenAI(prompt, style, references = [], options = {})
         response_format: 'b64_json'
     };
 
-    // v2.4: Отправляем ВСЕ референсы, а не только первый
+    // v2.4: Send ALL references
     if (references.length === 1) {
         body.image = `data:image/png;base64,${references[0].base64}`;
     } else if (references.length > 1) {
@@ -856,7 +826,7 @@ async function generateImageOpenAI(prompt, style, references = [], options = {})
         method: 'POST',
         headers: { 'Authorization': `Bearer ${settings.apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        signal: options.signal, // v2.4: AbortController support
+        signal: options.signal,
     });
 
     if (!response.ok) throw new Error(`API Error (${response.status}): ${await response.text()}`);
@@ -888,13 +858,13 @@ async function generateImageGemini(prompt, style, references = [], options = {})
     const parts = [];
     for (const ref of references.slice(0, 4)) {
         parts.push({ inlineData: { mimeType: 'image/png', data: ref.base64 } });
-        parts.push({ text: `[Above image: ${ref.label}]` });
+        parts.push({ text: `[${ref.label}]` });
     }
 
     const fullPrompt = buildEnhancedPrompt(prompt, style, { ...options, _referenceLabels: references });
     parts.push({ text: fullPrompt });
 
-    // Определяем активный стиль для системной инструкции
+    // Determine active style for system instruction
     const useFixedStyle = settings.fixedStyleEnabled === true && settings.fixedStyle?.trim();
     const activeStyle = useFixedStyle ? settings.fixedStyle.trim() : (style || '');
 
@@ -903,10 +873,10 @@ async function generateImageGemini(prompt, style, references = [], options = {})
         generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio, imageSize } }
     };
 
-    // Добавляем системную инструкцию со стилем, если он задан
+    // v2.5: Much stronger system instruction for style enforcement
     if (activeStyle) {
         body.systemInstruction = {
-            parts: [{ text: `You are an image generation assistant. ALL images you generate MUST strictly follow this art style: ${activeStyle}. However, character likeness from reference images takes absolute priority — never sacrifice facial features, body type, or distinctive traits for the sake of style. Apply the style to rendering technique, lighting, color palette, and atmosphere while preserving exact character appearances.` }]
+            parts: [{ text: `You are an image generation assistant. CRITICAL RULE: ALL images you generate MUST be rendered in this exact art style: "${activeStyle}". This is NON-NEGOTIABLE. Every aspect of the image — characters, backgrounds, lighting, colors, linework, shading, proportions — must follow this style. Do NOT default to photorealism or any other style. If reference images are provided, copy the CHARACTER APPEARANCES (face, eyes, hair color, body type) from them, but ALWAYS render the visual output in the specified art style. The style "${activeStyle}" takes absolute priority over the model's default rendering behavior.` }]
         };
     }
 
@@ -914,7 +884,7 @@ async function generateImageGemini(prompt, style, references = [], options = {})
         method: 'POST',
         headers: { 'Authorization': `Bearer ${settings.apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        signal: options.signal, // v2.4: AbortController support
+        signal: options.signal,
     });
 
     if (!response.ok) throw new Error(`API Error (${response.status}): ${await response.text()}`);
@@ -943,34 +913,27 @@ function validateSettings() {
     if (errors.length > 0) throw new Error(`Ошибка настроек: ${errors.join(', ')}`);
 }
 
-// v2.4: Принимает предсобранные references (баг 3), поддерживает signal и таймаут
 async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {}) {
     validateSettings();
     const settings = getSettings();
 
-    // Если референсы не переданы снаружи — собираем (обратная совместимость)
     let references = options.references;
     if (!references) {
         onStatusUpdate?.('Сбор референсов...');
         references = await collectReferenceImages(prompt);
     }
 
-    // v2.4: Таймаут через AbortController
     const timeoutMs = (settings.requestTimeout || 120) * 1000;
-    const externalSignal = options.signal; // от кнопки отмены
+    const externalSignal = options.signal;
 
     let lastError;
     for (let attempt = 0; attempt <= settings.maxRetries; attempt++) {
-        // Создаём AbortController для таймаута на каждую попытку
         const timeoutController = new AbortController();
         const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
-
-        // Если есть внешний signal (кнопка отмены) — связываем с таймаутом
         const onExternalAbort = () => timeoutController.abort();
         externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
 
         try {
-            // Проверяем отмену перед началом
             if (externalSignal?.aborted) throw new DOMException('Отменено пользователем', 'AbortError');
 
             onStatusUpdate?.(`Генерация${attempt > 0 ? ` (повтор ${attempt}/${settings.maxRetries})` : ''}...`);
@@ -985,8 +948,6 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
             return result;
         } catch (error) {
             lastError = error;
-
-            // Отмена пользователем — не повторяем
             if (error.name === 'AbortError') {
                 if (externalSignal?.aborted) {
                     lastError = new Error('Отменено пользователем');
@@ -995,7 +956,6 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
                 }
                 break;
             }
-
             const isRetryable = /429|503|502|504|timeout|network/i.test(error.message);
             if (!isRetryable || attempt === settings.maxRetries) break;
             const delay = settings.retryDelay * Math.pow(2, attempt);
@@ -1107,19 +1067,14 @@ async function parseImageTags(text, options = {}) {
         const tagOnly = text.substring(markerIndex, jsonEnd + 1);
         const jsonStr = text.substring(jsonStart, jsonEnd);
         try {
-            // v2.4: Сначала пробуем парсить как есть (нормальный JSON с двойными кавычками)
             let data;
             try {
                 data = JSON.parse(jsonStr);
             } catch (_) {
-                // Если не вышло — пробуем умную замену одинарных кавычек на двойные,
-                // но только тех, что являются JSON-разделителями, а не апострофами в тексте.
-                // Заменяем ' на " только если ' стоит рядом с : { } , [ ] или в начале/конце
                 const fixed = jsonStr.replace(/'/g, '"');
                 try {
                     data = JSON.parse(fixed);
                 } catch (__) {
-                    // Последняя попытка: парсим через relaxed-режим
                     const relaxed = jsonStr
                         .replace(/^\s*\{\s*/, '{')
                         .replace(/\s*\}\s*$/, '}')
@@ -1191,7 +1146,6 @@ function createErrorPlaceholder(tagId, errorMessage, tagInfo) {
 // MESSAGE PROCESSING
 // ============================================================
 
-// Оборачивает картинку в контейнер с кнопкой перегенерации
 function wrapImageWithRegen(img, messageId, tagIndex) {
     const wrapper = document.createElement('div');
     wrapper.className = 'iig-image-wrapper';
@@ -1215,7 +1169,6 @@ function wrapImageWithRegen(img, messageId, tagIndex) {
     return wrapper;
 }
 
-// Перегенерация одного конкретного арта по индексу тега
 async function regenerateSingleImage(messageId, tagIndex) {
     const context = SillyTavern.getContext();
     const message = context.chat[messageId];
@@ -1230,7 +1183,6 @@ async function regenerateSingleImage(messageId, tagIndex) {
     const mesTextEl = messageElement.querySelector('.mes_text');
     if (!mesTextEl) return;
 
-    // Ищем wrapper или img по индексу
     const allWrappers = Array.from(mesTextEl.querySelectorAll('.iig-image-wrapper'));
     const allImgs = Array.from(mesTextEl.querySelectorAll('img.iig-generated-image, img.iig-error-image, img[data-iig-instruction]'));
     const targetEl = allWrappers[tagIndex] || allImgs[tagIndex];
@@ -1291,11 +1243,9 @@ async function processMessageTags(messageId) {
     const mesTextEl = messageElement.querySelector('.mes_text');
     if (!mesTextEl) { processingMessages.delete(messageId); return; }
 
-    // v2.4: AbortController для всего сообщения (кнопка отмены)
     const abortController = new AbortController();
     activeAbortControllers.set(messageId, abortController);
 
-    // v2.4 (баг 3): Собираем референсы ОДИН раз для всех тегов
     let sharedReferences;
     try {
         sharedReferences = await collectReferenceImages(tags[0].prompt);
@@ -1304,8 +1254,7 @@ async function processMessageTags(messageId) {
         iigLog('WARN', 'Failed to collect references:', e.message);
     }
 
-    // v2.4 (баг 6): Подготавливаем плейсхолдеры для legacy тегов через DOM-безопасный метод
-    // Вместо innerHTML перезаписи используем TreeWalker
+    // Prepare placeholders for legacy tags via DOM-safe method
     for (let i = 0; i < tags.length; i++) {
         const tag = tags[i];
         if (!tag.isNewFormat) {
@@ -1314,7 +1263,6 @@ async function processMessageTags(messageId) {
             while ((textNode = walker.nextNode())) {
                 const pos = textNode.textContent.indexOf(tag.fullMatch);
                 if (pos !== -1) {
-                    // Разрезаем текстовый узел и вставляем span-плейсхолдер
                     const beforeText = textNode.textContent.substring(0, pos);
                     const afterText = textNode.textContent.substring(pos + tag.fullMatch.length);
                     const placeholder = document.createElement('span');
@@ -1331,14 +1279,13 @@ async function processMessageTags(messageId) {
         }
     }
 
-    // v2.4 (баг 4): Последовательная генерация вместо Promise.all
+    // Sequential generation
     for (let index = 0; index < tags.length; index++) {
         if (abortController.signal.aborted) break;
 
         const tag = tags[index];
         const tagId = `iig-${messageId}-${index}`;
 
-        // Кнопка отмены привязана к общему AbortController
         const loadingPlaceholder = createLoadingPlaceholder(tagId, () => {
             abortController.abort();
         });
@@ -1372,7 +1319,6 @@ async function processMessageTags(messageId) {
                 }
             }
         } else {
-            // v2.4 (баг 6): используем уже подготовленный плейсхолдер
             targetElement = tag._placeholderEl || null;
         }
 
@@ -1383,8 +1329,8 @@ async function processMessageTags(messageId) {
         try {
             const dataUrl = await generateImageWithRetry(tag.prompt, tag.style, (s) => { if (statusEl) statusEl.textContent = s; }, {
                 aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality,
-                references: sharedReferences, // v2.4: общие референсы
-                signal: abortController.signal, // v2.4: кнопка отмены
+                references: sharedReferences,
+                signal: abortController.signal,
             });
             if (statusEl) statusEl.textContent = 'Сохранение...';
             const imagePath = await saveImageToFile(dataUrl);
@@ -1401,7 +1347,6 @@ async function processMessageTags(messageId) {
             loadingPlaceholder.replaceWith(createErrorPlaceholder(tagId, error.message, tag));
             if (tag.isNewFormat) { message.mes = message.mes.replace(tag.fullMatch, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${ERROR_IMAGE_PATH}"`)); }
             else { message.mes = message.mes.replace(tag.fullMatch, `[IMG:ERROR:${error.message.substring(0, 50)}]`); }
-            // Если отмена — прекращаем все оставшиеся теги
             if (abortController.signal.aborted) {
                 toastr.warning('Генерация отменена', 'Генерация картинок');
                 break;
@@ -1431,11 +1376,9 @@ async function regenerateMessageImages(messageId) {
     const mesTextEl = messageElement.querySelector('.mes_text');
     if (!mesTextEl) { processingMessages.delete(messageId); return; }
 
-    // v2.4: AbortController для кнопки отмены
     const abortController = new AbortController();
     activeAbortControllers.set(messageId, abortController);
 
-    // v2.4 (баг 3): общие референсы
     let sharedReferences;
     try {
         sharedReferences = await collectReferenceImages(tags[0].prompt);
@@ -1443,10 +1386,8 @@ async function regenerateMessageImages(messageId) {
         sharedReferences = [];
     }
 
-    // Собираем обёртки (.iig-image-wrapper) или голые img по порядку
     const allWrappers = Array.from(mesTextEl.querySelectorAll('.iig-image-wrapper'));
     const allBareImgs = Array.from(mesTextEl.querySelectorAll('img[data-iig-instruction], img.iig-generated-image, img.iig-error-image'));
-    // Если есть wrappers — используем их; иначе голые img
     const targetPool = allWrappers.length >= tags.length ? allWrappers :
         allWrappers.length > 0 ? allWrappers : allBareImgs;
 
@@ -1461,7 +1402,6 @@ async function regenerateMessageImages(messageId) {
             continue;
         }
 
-        // Достаём instruction из img (может быть внутри wrapper или быть самим элементом)
         const innerImg = targetEl.querySelector?.('img[data-iig-instruction]') || targetEl;
 
         try {
@@ -1747,6 +1687,7 @@ function renderHairstyleGrid(target) { renderOutfitGrid('hairstyle', target); }
 
 // ============================================================
 // SETTINGS UI
+// v2.5: Removed positive/negative prompts section
 // ============================================================
 
 function renderNpcList() {
@@ -1808,7 +1749,7 @@ function renderNpcList() {
             if (!file) return;
             const reader = new FileReader();
             reader.onloadend = async () => {
-                const resized = await resizeImageBase64(reader.result.split(',')[1], 512);
+                const resized = await resizeImageBase64(reader.result.split(',')[1], 768);
                 updateNpc(npc.id, { avatarData: resized });
                 renderNpcList();
                 toastr.success(`Аватар загружен для ${npc.name || 'NPC'}`, 'Генерация картинок');
@@ -1921,7 +1862,6 @@ function createSettingsUI() {
         </div>
     `;
 
-    // v2.3: Updated wardrobe section with description panel containers
     const wardrobeSectionContent = `
         <p class="hint">Загрузите картинки с одеждой. Выбранная одежда будет отправлена как референс — модель оденет персонажа в неё. Добавьте текстовое описание (вручную или через AI), чтобы текстовая модель тоже знала об одежде.</p>
 
@@ -1951,7 +1891,6 @@ function createSettingsUI() {
         </div>
     `;
 
-    // v2.3: New section for description API settings
     const wardrobeDescApiSectionContent = `
         <p class="hint">Настройте текстовую/vision модель для автоматической генерации описаний одежды по картинке. Если эндпоинт и ключ не указаны, будут использованы основные настройки API (из секции "Настройки API").</p>
 
@@ -1977,7 +1916,6 @@ function createSettingsUI() {
         </div>
     `;
 
-    // v2.4: Hairstyle section
     const hairstyleSectionContent = `
         <p class="hint">Загрузите картинки с причёсками. Выбранная причёска будет отправлена как референс — модель нарисует персонажа с ней. Описание (вручную или через AI) инжектится в текстовую модель.</p>
 
@@ -2015,26 +1953,16 @@ function createSettingsUI() {
         </div>
     `;
 
-    const promptsSectionContent = `
-        <p class="hint">Positive добавляется в начало, Negative — как инструкция избегания.</p>
-        <div class="flex-col" style="margin-bottom: 8px;">
-            <label for="iig_positive_prompt">Positive промпт</label>
-            <textarea id="iig_positive_prompt" class="text_pole" rows="2" placeholder="masterpiece, best quality...">${settings.positivePrompt || ''}</textarea>
-        </div>
-        <div class="flex-col" style="margin-bottom: 8px;">
-            <label for="iig_negative_prompt">Negative промпт</label>
-            <textarea id="iig_negative_prompt" class="text_pole" rows="2" placeholder="low quality, blurry...">${settings.negativePrompt || ''}</textarea>
-        </div>
-    `;
-
+    // v2.5: Style section is now more prominent with better description
     const styleSectionContent = `
+        <p class="hint">Фиксированный стиль имеет НАИВЫСШИЙ приоритет и применяется ко всем генерациям. Перезаписывает стиль из тега. Примеры: "manhwa style", "anime cel shading", "watercolor illustration", "oil painting".</p>
         <label class="checkbox_label">
             <input type="checkbox" id="iig_fixed_style_enabled" ${settings.fixedStyleEnabled ? 'checked' : ''}>
             <span>Включить фиксированный стиль</span>
         </label>
         <div class="flex-col" style="margin-top: 5px;">
             <label for="iig_fixed_style">Стиль</label>
-            <input type="text" id="iig_fixed_style" class="text_pole" value="${settings.fixedStyle || ''}" placeholder="Anime semi-realistic style...">
+            <textarea id="iig_fixed_style" class="text_pole" rows="2" placeholder="manhwa style, clean lineart, vibrant colors, dynamic shading...">${settings.fixedStyle || ''}</textarea>
         </div>
     `;
 
@@ -2094,13 +2022,12 @@ function createSettingsUI() {
 
                     ${createCollapsibleSection('api', '🔌', 'Настройки API', apiSectionContent)}
                     ${createCollapsibleSection('gen_params', '⚙️', 'Параметры генерации', genParamsSectionContent)}
+                    ${createCollapsibleSection('fixed_style', '🎨', 'Фиксированный стиль (приоритет №1)', styleSectionContent)}
                     ${createCollapsibleSection('references', '🖼️', 'Референсы аватарок', referencesSectionContent)}
                     ${createCollapsibleSection('wardrobe', '👗', 'Гардероб (одежда)', wardrobeSectionContent)}
                     ${createCollapsibleSection('wardrobe_desc_api', '🤖', 'Описание одежды (Vision API)', wardrobeDescApiSectionContent)}
                     ${createCollapsibleSection('hairstyles', '💇', 'Причёски', hairstyleSectionContent)}
                     ${createCollapsibleSection('npcs', '🎭', 'NPC / Доп. персонажи', npcSectionContent)}
-                    ${createCollapsibleSection('prompts', '✍️', 'Пользовательские промпты', promptsSectionContent)}
-                    ${createCollapsibleSection('fixed_style', '🎨', 'Фиксированный стиль', styleSectionContent)}
                     ${createCollapsibleSection('extraction', '👤', 'Извлечение внешности и одежды', extractionSectionContent)}
                     ${createCollapsibleSection('errors', '🔄', 'Обработка ошибок', errorSectionContent)}
                     ${createCollapsibleSection('debug', '🐛', 'Отладка', debugSectionContent)}
@@ -2224,16 +2151,16 @@ function bindSettingsEvents() {
     document.getElementById('iig_request_timeout')?.addEventListener('input', (e) => { settings.requestTimeout = parseInt(e.target.value) || 120; saveSettings(); });
     document.getElementById('iig_export_logs')?.addEventListener('click', exportLogs);
 
-    document.getElementById('iig_positive_prompt')?.addEventListener('input', (e) => { settings.positivePrompt = e.target.value; saveSettings(); });
-    document.getElementById('iig_negative_prompt')?.addEventListener('input', (e) => { settings.negativePrompt = e.target.value; saveSettings(); });
+    // v2.5: Style settings (moved up, textarea instead of input)
     document.getElementById('iig_fixed_style_enabled')?.addEventListener('change', (e) => { settings.fixedStyleEnabled = e.target.checked; saveSettings(); });
     document.getElementById('iig_fixed_style')?.addEventListener('input', (e) => { settings.fixedStyle = e.target.value; saveSettings(); });
+
     document.getElementById('iig_extract_appearance')?.addEventListener('change', (e) => { settings.extractAppearance = e.target.checked; saveSettings(); });
     document.getElementById('iig_extract_user_appearance')?.addEventListener('change', (e) => { settings.extractUserAppearance = e.target.checked; saveSettings(); });
     document.getElementById('iig_detect_clothing')?.addEventListener('change', (e) => { settings.detectClothing = e.target.checked; saveSettings(); });
     document.getElementById('iig_clothing_depth')?.addEventListener('input', (e) => { settings.clothingSearchDepth = parseInt(e.target.value) || 5; saveSettings(); });
 
-    // v2.3: Wardrobe injection settings
+    // Wardrobe injection settings
     document.getElementById('iig_inject_wardrobe')?.addEventListener('change', (e) => {
         settings.injectWardrobeToChat = e.target.checked;
         saveSettings();
@@ -2246,7 +2173,7 @@ function bindSettingsEvents() {
         updateWardrobeInjection();
     });
 
-    // v2.3: Wardrobe description API settings
+    // Wardrobe description API settings
     document.getElementById('iig_wardrobe_desc_endpoint')?.addEventListener('input', (e) => {
         settings.wardrobeDescEndpoint = e.target.value;
         saveSettings();
@@ -2302,7 +2229,7 @@ function bindSettingsEvents() {
             if (!file) return;
             const reader = new FileReader();
             reader.onloadend = async () => {
-                const resized = await resizeImageBase64(reader.result.split(',')[1], 512);
+                const resized = await resizeImageBase64(reader.result.split(',')[1], 768);
                 const name = nameInput?.value?.trim() || file.name.replace(/\.[^.]+$/, '') || cfg.defaultName;
                 addOutfitItem(sys, name, resized, target);
                 if (nameInput) nameInput.value = '';
@@ -2315,7 +2242,7 @@ function bindSettingsEvents() {
     };
     for (const sys of ['wardrobe', 'hairstyle']) { bindOutfitAdd(sys, 'char'); bindOutfitAdd(sys, 'user'); }
 
-    // v2.4: Hairstyle events
+    // Hairstyle events
     document.getElementById('iig_inject_hairstyle')?.addEventListener('change', (e) => {
         settings.injectHairstyleToChat = e.target.checked;
         saveSettings();
@@ -2339,17 +2266,17 @@ function bindSettingsEvents() {
     context.eventSource.on(context.event_types.APP_READY, () => {
         createSettingsUI();
         addButtonsToExistingMessages();
-        updateWardrobeInjection(); // v2.3: initialize wardrobe injection on load
-        updateHairstyleInjection(); // v2.4: initialize hairstyle injection on load
-        console.log('[IIG] Inline Image Generation v2.4 loaded');
+        updateWardrobeInjection();
+        updateHairstyleInjection();
+        console.log('[IIG] Inline Image Generation v2.5 loaded');
     });
 
     context.eventSource.on(context.event_types.CHAT_CHANGED, () => {
         setTimeout(() => {
             addButtonsToExistingMessages();
             updateCharAvatarPreview();
-            updateWardrobeInjection(); // v2.3: re-inject on chat change
-            updateHairstyleInjection(); // v2.4: re-inject hairstyle on chat change
+            updateWardrobeInjection();
+            updateHairstyleInjection();
         }, 100);
     });
 
@@ -2357,5 +2284,5 @@ function bindSettingsEvents() {
         await onMessageReceived(messageId);
     });
 
-    console.log('[IIG] Inline Image Generation v2.4 initialized');
+    console.log('[IIG] Inline Image Generation v2.5 initialized');
 })();
