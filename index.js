@@ -710,7 +710,10 @@ function buildEnhancedPrompt(basePrompt, style, options = {}) {
     // v2.5: Style comes right after refs — "draw THESE characters in THIS style"
 
     if (activeStyle) {
-        promptParts.push(`[MANDATORY ART STYLE — APPLIES TO THE ENTIRE IMAGE: Render everything in "${activeStyle}" style. Every element — characters, backgrounds, lighting, colors, linework, shading — MUST follow this style. Do NOT use photorealistic/realistic rendering unless the style explicitly says so. Keep character likeness from references above, but draw them in "${activeStyle}" style.]`);
+        const ignoreNote = useFixedStyle
+            ? ` The scene description below may contain OTHER style keywords (e.g. "Craig Mullins", "painterly", "photorealistic", "masterpiece", "8k") — COMPLETELY IGNORE THEM. "${activeStyle}" is the ONLY style.`
+            : '';
+        promptParts.push(`[MANDATORY ART STYLE — APPLIES TO THE ENTIRE IMAGE: Render everything in "${activeStyle}" style. Every element — characters, backgrounds, lighting, colors, linework, shading — MUST follow this style. Do NOT use photorealistic/realistic rendering unless the style explicitly says so. Keep character likeness from references above, but draw them in "${activeStyle}" style.${ignoreNote}]`);
     }
 
     // ===== BLOCK 3: APPEARANCE — brief, only key traits =====
@@ -776,14 +779,49 @@ function buildEnhancedPrompt(basePrompt, style, options = {}) {
     }
 
     // ===== BLOCK 4: SCENE PROMPT =====
+    // v2.5: When fixedStyle is active, clean basePrompt from embedded style/quality/negative boilerplate
 
-    promptParts.push(basePrompt);
+    let cleanedPrompt = basePrompt;
+
+    if (useFixedStyle) {
+        // v2.5: Strip the tag's style field content directly from prompt (LLMs often duplicate style into DESC)
+        if (style && style.length > 5) {
+            // Escape regex special chars and replace both spaces and underscores
+            const escaped = style.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[_ ]+/g, '[_ ]+');
+            try { cleanedPrompt = cleanedPrompt.replace(new RegExp(escaped + '[,_\\s]*', 'gi'), ''); } catch (_) {}
+        }
+        // Strip common quality boilerplate that LLMs embed (masterpiece, 8k, best quality, etc.)
+        cleanedPrompt = cleanedPrompt
+            .replace(/\b(masterpiece|best[_ ]quality|worst[_ ]quality|low[_ ]quality|lowres|8k|4k)\b[,_\s]*/gi, '')
+            // Strip negative prompt blocks entirely
+            .replace(/\b(NEGATIVE[_ ]PROMPT|AVOID)[:\s_]*[^.]*/gi, '')
+            // Strip style keywords that conflict with fixed style (common patterns from system prompts)
+            .replace(/\b(Craig[_ ]Mullins[_ ]style|loose[_ ]painterly[_ ]brushwork|atmospheric[_ ]perspective|cinematic[_ ]dramatic[_ ]lighting|muted[_ ]earth[_ ]tones[_ ]with[_ ]color[_ ]accents|concept[_ ]art[_ ]quality|environmental[_ ]storytelling|Perfect[_ ]perspective|perfect[_ ]proportions)\b[,_\s]*/gi, '')
+            // Strip any remaining "X style" pattern that looks like art style (e.g. "anime style", "watercolor style")
+            .replace(/\b[\w\-]+[_ ]style\b[,_\s]*/gi, '')
+            // Clean up leftover commas, underscores, whitespace
+            .replace(/[,_]{2,}/g, ', ')
+            .replace(/^[\s,_]+|[\s,_]+$/g, '')
+            .replace(/\s{2,}/g, ' ')
+            .trim();
+
+        if (cleanedPrompt !== basePrompt) {
+            iigLog('INFO', `Cleaned embedded style from prompt (${basePrompt.length} -> ${cleanedPrompt.length} chars)`);
+        }
+
+        promptParts.push(`[SCENE DESCRIPTION — IGNORE any style, quality, or negative keywords below. Use ONLY the mandatory art style specified above:]`);
+    }
+
+    promptParts.push(cleanedPrompt);
 
     // ===== BLOCK 5: STYLE REMINDER AT THE END =====
-    // v2.5: Stronger reminder with explicit "not realistic" if style is non-realistic
 
     if (activeStyle) {
-        promptParts.push(`[STYLE ENFORCEMENT: The ENTIRE image must be rendered in "${activeStyle}" style. Do NOT fall back to photorealism or any other default style.]`);
+        if (useFixedStyle) {
+            promptParts.push(`[FINAL STYLE OVERRIDE: DISREGARD any art style mentioned anywhere in the scene description. The ONLY art style for this image is "${activeStyle}". Ignore all other style keywords.]`);
+        } else {
+            promptParts.push(`[STYLE ENFORCEMENT: The ENTIRE image must be rendered in "${activeStyle}" style. Do NOT fall back to photorealism or any other default style.]`);
+        }
     }
 
     const fullPrompt = promptParts.join('\n\n');
@@ -876,10 +914,13 @@ async function generateImageGemini(prompt, style, references = [], options = {})
 
     // v2.5: Much stronger system instruction for style enforcement
     if (activeStyle) {
+        const ignoreEmbedded = useFixedStyle
+            ? ` IMPORTANT: The user prompt may contain OTHER style keywords (e.g. "Craig Mullins", "painterly", "photorealistic", quality tags like "masterpiece", "8k") — IGNORE ALL OF THEM. Use ONLY "${activeStyle}" as the art style.`
+            : '';
         body.systemInstruction = {
             parts: [{ text: `You are an image generation assistant. You have TWO non-negotiable rules:
 1. CHARACTER LIKENESS (highest priority): If reference images are provided, you MUST copy the EXACT appearance of each character — face structure, eye color, hair color, skin tone, body type, distinctive features. Never deviate from the reference likeness.
-2. ART STYLE (mandatory rendering): ALL images MUST be rendered in this exact art style: "${activeStyle}". Every aspect — linework, shading, coloring, backgrounds, lighting, proportions — must follow "${activeStyle}". Do NOT default to photorealism or any other style unless "${activeStyle}" explicitly requires it.
+2. ART STYLE (mandatory rendering): ALL images MUST be rendered in this exact art style: "${activeStyle}". Every aspect — linework, shading, coloring, backgrounds, lighting, proportions — must follow "${activeStyle}". Do NOT default to photorealism or any other style unless "${activeStyle}" explicitly requires it.${ignoreEmbedded}
 In short: draw the characters from the references, but render everything in "${activeStyle}" style.` }]
         };
     }
