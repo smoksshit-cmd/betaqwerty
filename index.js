@@ -4,9 +4,9 @@
  * Catches [IMG:GEN:{json}] tags in AI messages and generates images via configured API.
  * Supports OpenAI-compatible and Gemini-compatible (nano-banana) endpoints.
  *
- * v2.5: Style enforcement overhaul — fixed style now dominates the prompt,
- *        removed positive/negative prompts to reduce noise,
- *        better avatar reference handling (larger resize), cleaner prompt structure.
+ * v2.6: Reference priority: avatars → clothing → prompt.
+ *        Avatar refs reset to manual each chat.
+ *        Removed standalone generation button.
  */
 
 const MODULE_NAME = 'inline_image_gen';
@@ -57,7 +57,6 @@ const defaultSettings = Object.freeze({
     userAvatarFile: '',
     aspectRatio: '1:1',
     imageSize: '1K',
-    // v2.5: removed positivePrompt, negativePrompt
     fixedStyle: '',
     fixedStyleEnabled: false,
     extractAppearance: true,
@@ -328,7 +327,6 @@ async function resizeImageBase64(base64, maxSize = 768) {
 }
 
 // v2.5: Mask face area in hairstyle reference images
-// Draws a gradient that fades face/body to neutral gray, preserving only the hair area at top
 async function maskFaceForHairstyle(base64) {
     return new Promise((resolve) => {
         const img = new Image();
@@ -339,28 +337,22 @@ async function maskFaceForHairstyle(base64) {
             canvas.height = height;
             const ctx = canvas.getContext('2d');
 
-            // Draw original image
             ctx.drawImage(img, 0, 0);
 
-            // Create a gradient mask: transparent at top (hair), solid neutral at bottom (face/body)
-            // Face typically starts at ~30-35% from top, so we start fading there
-            const fadeStart = Math.round(height * 0.30);  // Start fading at 30% from top
-            const fadeEnd = Math.round(height * 0.55);     // Fully masked by 55% from top
+            const fadeStart = Math.round(height * 0.30);
+            const fadeEnd = Math.round(height * 0.55);
 
-            // Draw gradient overlay from transparent to neutral gray
             const gradient = ctx.createLinearGradient(0, fadeStart, 0, fadeEnd);
-            gradient.addColorStop(0, 'rgba(180, 180, 180, 0)');    // Transparent at hair area
-            gradient.addColorStop(0.5, 'rgba(180, 180, 180, 0.7)'); // Semi-transparent transition
-            gradient.addColorStop(1, 'rgba(180, 180, 180, 1)');     // Fully masked
+            gradient.addColorStop(0, 'rgba(180, 180, 180, 0)');
+            gradient.addColorStop(0.5, 'rgba(180, 180, 180, 0.7)');
+            gradient.addColorStop(1, 'rgba(180, 180, 180, 1)');
 
             ctx.fillStyle = gradient;
             ctx.fillRect(0, fadeStart, width, fadeEnd - fadeStart);
 
-            // Solid fill below the gradient (face/body area completely hidden)
             ctx.fillStyle = 'rgba(180, 180, 180, 1)';
             ctx.fillRect(0, fadeEnd, width, height - fadeEnd);
 
-            // Add text label so the model understands
             ctx.fillStyle = 'rgba(100, 100, 100, 0.8)';
             ctx.font = `${Math.max(12, Math.round(width * 0.04))}px sans-serif`;
             ctx.textAlign = 'center';
@@ -487,11 +479,34 @@ function updateOutfitInjection(sys) {
     } catch (error) { iigLog('ERROR', `Error updating ${sys} injection:`, error); }
 }
 
-// Legacy aliases for compatibility in buildEnhancedPrompt / collectReferenceImages
+// Legacy aliases
 function getActiveWardrobeItem(target) { return getActiveOutfitItem('wardrobe', target); }
 function getActiveHairstyleItem(target) { return getActiveOutfitItem('hairstyle', target); }
 function updateWardrobeInjection() { updateOutfitInjection('wardrobe'); }
 function updateHairstyleInjection() { updateOutfitInjection('hairstyle'); }
+
+// ============================================================
+// v2.6: Reset avatar ref checkboxes on chat change
+// ============================================================
+
+function resetAvatarRefsForNewChat() {
+    const settings = getSettings();
+    settings.sendCharAvatar = false;
+    settings.sendUserAvatar = false;
+    saveSettings();
+
+    // Update UI checkboxes if they exist
+    const charCheck = document.getElementById('iig_send_char_avatar');
+    if (charCheck) charCheck.checked = false;
+    const userCheck = document.getElementById('iig_send_user_avatar');
+    if (userCheck) userCheck.checked = false;
+
+    // Hide user avatar row
+    document.getElementById('iig_user_avatar_row')?.classList.add('hidden');
+    document.getElementById('iig_user_avatar_preview')?.classList.add('hidden');
+
+    iigLog('INFO', 'Avatar references reset for new chat (manual mode)');
+}
 
 // ============================================================
 // NAME DETECTION IN PROMPT
@@ -521,6 +536,7 @@ function detectMentionedCharacters(prompt) {
     return result;
 }
 
+// v2.6: Reordered — avatars FIRST, then wardrobe/clothing, then hairstyles
 async function collectReferenceImages(prompt) {
     const settings = getSettings();
     const references = [];
@@ -528,10 +544,11 @@ async function collectReferenceImages(prompt) {
     let mentions = { charMentioned: false, userMentioned: false, npcIds: [] };
     if (settings.autoDetectNames) mentions = detectMentionedCharacters(prompt);
 
+    // ===== BLOCK 1: AVATAR REFERENCES (highest priority) =====
+
     if (settings.sendCharAvatar || mentions.charMentioned) {
         const charAvatar = await getCharacterAvatarBase64();
         if (charAvatar) {
-            // v2.5: resize to 768 for better quality
             const resized = await resizeImageBase64(charAvatar, 768);
             const context = SillyTavern.getContext();
             const charName = context.characters?.[context.characterId]?.name || 'Character';
@@ -555,7 +572,8 @@ async function collectReferenceImages(prompt) {
         references.push({ base64: resized, label: `Reference photo of ${npc.name} — copy appearance EXACTLY`, name: npc.name });
     }
 
-    // Wardrobe clothing references
+    // ===== BLOCK 2: WARDROBE / CLOTHING REFERENCES =====
+
     const charWardrobeItem = getActiveWardrobeItem('char');
     if (charWardrobeItem?.imageData) {
         const context = SillyTavern.getContext();
@@ -573,8 +591,8 @@ async function collectReferenceImages(prompt) {
         references.push({ base64: userWardrobeItem.imageData, label, name: `${userName}'s outfit` });
     }
 
-    // v2.4: Hairstyle references
-    // v2.5: Mask face area + explicit instruction to use ONLY hair shape
+    // ===== BLOCK 3: HAIRSTYLE REFERENCES (last before prompt) =====
+
     const charHairstyleItem = getActiveHairstyleItem('char');
     if (charHairstyleItem?.imageData) {
         const context = SillyTavern.getContext();
@@ -733,7 +751,7 @@ function detectClothingFromChat(depth = 5) {
 
 // ============================================================
 // ENHANCED PROMPT BUILDER
-// v2.5: Complete rewrite — style is king, prompt is clean
+// v2.6: Reordered — refs → clothing → prompt
 // ============================================================
 
 function buildEnhancedPrompt(basePrompt, style, options = {}) {
@@ -746,7 +764,6 @@ function buildEnhancedPrompt(basePrompt, style, options = {}) {
     const activeStyle = useFixedStyle ? settings.fixedStyle.trim() : (style || '');
 
     // ===== BLOCK 1: REFERENCE IMAGES — HIGHEST PRIORITY FOR LIKENESS =====
-    // v2.5: References go FIRST so the model sees them before anything else
 
     if (options._referenceLabels?.length > 0) {
         const labelsText = options._referenceLabels.map((ref, i) =>
@@ -756,7 +773,6 @@ function buildEnhancedPrompt(basePrompt, style, options = {}) {
     }
 
     // ===== BLOCK 2: STYLE — MANDATORY FOR RENDERING =====
-    // v2.5: Style comes right after refs — "draw THESE characters in THIS style"
 
     if (activeStyle) {
         const ignoreNote = useFixedStyle
@@ -785,7 +801,8 @@ function buildEnhancedPrompt(basePrompt, style, options = {}) {
         }
     }
 
-    // Wardrobe override (brief)
+    // ===== BLOCK 4: WARDROBE / CLOTHING (before scene prompt) =====
+
     const charWardrobeItem = getActiveWardrobeItem('char');
     if (charWardrobeItem) {
         const charName = context.characters?.[context.characterId]?.name || 'Character';
@@ -809,12 +826,11 @@ function buildEnhancedPrompt(basePrompt, style, options = {}) {
         if (clothing) promptParts.push(`[${clothing}]`);
     }
 
-    // Hairstyle override — v2.5: face masked in image, description is primary source
+    // Hairstyle override
     const charHairstyleItem = getActiveHairstyleItem('char');
     if (charHairstyleItem) {
         const charName = context.characters?.[context.characterId]?.name || 'Character';
         if (charHairstyleItem.description) {
-            // Description available → use it as primary, image is secondary
             promptParts.push(`[HAIRSTYLE for ${charName}: "${charHairstyleItem.description}". Keep ${charName}'s FACE, EYES, SKIN from avatar reference. Keep ${charName}'s original HAIR COLOR. Change ONLY the hair shape/silhouette/length.]`);
         } else {
             promptParts.push(`[HAIRSTYLE for ${charName}: Apply hair silhouette from the masked hairstyle reference image. Keep ${charName}'s FACE, EYES, SKIN from avatar. Keep original HAIR COLOR. Change ONLY hair shape.]`);
@@ -830,28 +846,20 @@ function buildEnhancedPrompt(basePrompt, style, options = {}) {
         }
     }
 
-    // ===== BLOCK 4: SCENE PROMPT =====
-    // v2.5: When fixedStyle is active, clean basePrompt from embedded style/quality/negative boilerplate
+    // ===== BLOCK 5: SCENE PROMPT (last) =====
 
     let cleanedPrompt = basePrompt;
 
     if (useFixedStyle) {
-        // v2.5: Strip the tag's style field content directly from prompt (LLMs often duplicate style into DESC)
         if (style && style.length > 5) {
-            // Escape regex special chars and replace both spaces and underscores
             const escaped = style.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[_ ]+/g, '[_ ]+');
             try { cleanedPrompt = cleanedPrompt.replace(new RegExp(escaped + '[,_\\s]*', 'gi'), ''); } catch (_) {}
         }
-        // Strip common quality boilerplate that LLMs embed (masterpiece, 8k, best quality, etc.)
         cleanedPrompt = cleanedPrompt
             .replace(/\b(masterpiece|best[_ ]quality|worst[_ ]quality|low[_ ]quality|lowres|8k|4k)\b[,_\s]*/gi, '')
-            // Strip negative prompt blocks entirely
             .replace(/\b(NEGATIVE[_ ]PROMPT|AVOID)[:\s_]*[^.]*/gi, '')
-            // Strip style keywords that conflict with fixed style (common patterns from system prompts)
             .replace(/\b(Craig[_ ]Mullins[_ ]style|loose[_ ]painterly[_ ]brushwork|atmospheric[_ ]perspective|cinematic[_ ]dramatic[_ ]lighting|muted[_ ]earth[_ ]tones[_ ]with[_ ]color[_ ]accents|concept[_ ]art[_ ]quality|environmental[_ ]storytelling|Perfect[_ ]perspective|perfect[_ ]proportions)\b[,_\s]*/gi, '')
-            // Strip any remaining "X style" pattern that looks like art style (e.g. "anime style", "watercolor style")
             .replace(/\b[\w\-]+[_ ]style\b[,_\s]*/gi, '')
-            // Clean up leftover commas, underscores, whitespace
             .replace(/[,_]{2,}/g, ', ')
             .replace(/^[\s,_]+|[\s,_]+$/g, '')
             .replace(/\s{2,}/g, ' ')
@@ -866,7 +874,7 @@ function buildEnhancedPrompt(basePrompt, style, options = {}) {
 
     promptParts.push(cleanedPrompt);
 
-    // ===== BLOCK 5: STYLE REMINDER AT THE END =====
+    // ===== BLOCK 6: STYLE REMINDER AT THE END =====
 
     if (activeStyle) {
         if (useFixedStyle) {
@@ -906,7 +914,6 @@ async function generateImageOpenAI(prompt, style, references = [], options = {})
         response_format: 'b64_json'
     };
 
-    // v2.4: Send ALL references
     if (references.length === 1) {
         body.image = `data:image/png;base64,${references[0].base64}`;
     } else if (references.length > 1) {
@@ -955,7 +962,6 @@ async function generateImageGemini(prompt, style, references = [], options = {})
     const fullPrompt = buildEnhancedPrompt(prompt, style, { ...options, _referenceLabels: references });
     parts.push({ text: fullPrompt });
 
-    // Determine active style for system instruction
     const useFixedStyle = settings.fixedStyleEnabled === true && settings.fixedStyle?.trim();
     const activeStyle = useFixedStyle ? settings.fixedStyle.trim() : (style || '');
 
@@ -964,7 +970,6 @@ async function generateImageGemini(prompt, style, references = [], options = {})
         generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio, imageSize } }
     };
 
-    // v2.5: Much stronger system instruction for style enforcement
     if (activeStyle) {
         const ignoreEmbedded = useFixedStyle
             ? ` IMPORTANT: The user prompt may contain OTHER style keywords (e.g. "Craig Mullins", "painterly", "photorealistic", quality tags like "masterpiece", "8k") — IGNORE ALL OF THEM. Use ONLY "${activeStyle}" as the art style.`
@@ -1702,7 +1707,6 @@ function renderHairstyleGrid(target) { renderOutfitGrid('hairstyle', target); }
 
 // ============================================================
 // SETTINGS UI
-// v2.5: Removed positive/negative prompts section
 // ============================================================
 
 function renderNpcList() {
@@ -1854,16 +1858,18 @@ function createSettingsUI() {
 
         <label class="checkbox_label">
             <input type="checkbox" id="iig_send_char_avatar" ${settings.sendCharAvatar ? 'checked' : ''}>
-            <span>Всегда отправлять аватар персонажа</span>
+            <span>Отправлять аватар персонажа</span>
         </label>
+        <p class="hint iig-manual-hint">⚠️ Сбрасывается при смене чата. Включайте вручную в каждом чате.</p>
         <div id="iig_char_avatar_preview" class="iig-avatar-preview-container">
             <div class="iig-avatar-preview-empty"><i class="fa-solid fa-user"></i><span>Нет аватара</span></div>
         </div>
 
         <label class="checkbox_label">
             <input type="checkbox" id="iig_send_user_avatar" ${settings.sendUserAvatar ? 'checked' : ''}>
-            <span>Всегда отправлять аватар юзера</span>
+            <span>Отправлять аватар юзера</span>
         </label>
+        <p class="hint iig-manual-hint">⚠️ Сбрасывается при смене чата. Включайте вручную в каждом чате.</p>
         <div id="iig_user_avatar_row" class="flex-row ${!settings.sendUserAvatar ? 'hidden' : ''}" style="margin-top: 5px; align-items: center;">
             <label for="iig_user_avatar_file">Аватар юзера</label>
             <select id="iig_user_avatar_file" class="flex1">
@@ -1968,7 +1974,6 @@ function createSettingsUI() {
         </div>
     `;
 
-    // v2.5: Style section is now more prominent with better description
     const styleSectionContent = `
         <p class="hint">Фиксированный стиль имеет НАИВЫСШИЙ приоритет и применяется ко всем генерациям. Перезаписывает стиль из тега. Примеры: "manhwa style", "anime cel shading", "watercolor illustration", "oil painting".</p>
         <label class="checkbox_label">
@@ -2166,7 +2171,6 @@ function bindSettingsEvents() {
     document.getElementById('iig_request_timeout')?.addEventListener('input', (e) => { settings.requestTimeout = parseInt(e.target.value) || 120; saveSettings(); });
     document.getElementById('iig_export_logs')?.addEventListener('click', exportLogs);
 
-    // v2.5: Style settings (moved up, textarea instead of input)
     document.getElementById('iig_fixed_style_enabled')?.addEventListener('change', (e) => { settings.fixedStyleEnabled = e.target.checked; saveSettings(); });
     document.getElementById('iig_fixed_style')?.addEventListener('input', (e) => { settings.fixedStyle = e.target.value; saveSettings(); });
 
@@ -2271,232 +2275,6 @@ function bindSettingsEvents() {
 }
 
 // ============================================================
-// STANDALONE IMAGE GENERATION (single art button)
-// v2.5: Generate a single image via modal dialog
-// ============================================================
-
-let standaloneAbortController = null;
-
-function createStandaloneModal() {
-    // Remove existing modal if any
-    document.getElementById('iig_standalone_modal')?.remove();
-
-    const settings = getSettings();
-    const useFixedStyle = settings.fixedStyleEnabled && settings.fixedStyle?.trim();
-
-    const modal = document.createElement('div');
-    modal.id = 'iig_standalone_modal';
-    modal.className = 'iig-modal-overlay';
-    modal.innerHTML = `
-        <div class="iig-modal">
-            <div class="iig-modal-header">
-                <span><i class="fa-solid fa-palette"></i> Генерация арта</span>
-                <div class="iig-modal-close" title="Закрыть"><i class="fa-solid fa-xmark"></i></div>
-            </div>
-            <div class="iig-modal-body">
-                <div class="iig-modal-field">
-                    <label for="iig_standalone_prompt">Промпт</label>
-                    <textarea id="iig_standalone_prompt" class="text_pole" rows="4" placeholder="Опишите что нарисовать..."></textarea>
-                </div>
-                <div class="iig-modal-field">
-                    <label for="iig_standalone_style">Стиль ${useFixedStyle ? '<span class="iig-modal-hint">(перезаписан фикс стилем)</span>' : ''}</label>
-                    <input type="text" id="iig_standalone_style" class="text_pole" value="${useFixedStyle ? settings.fixedStyle : ''}" placeholder="manhwa style, anime, watercolor..." ${useFixedStyle ? 'disabled' : ''}>
-                </div>
-                <div class="iig-modal-row">
-                    <div class="iig-modal-field iig-modal-half">
-                        <label for="iig_standalone_ratio">Соотношение</label>
-                        <select id="iig_standalone_ratio" class="text_pole">
-                            ${VALID_ASPECT_RATIOS.map(r => `<option value="${r}" ${r === (settings.aspectRatio || '1:1') ? 'selected' : ''}>${r}</option>`).join('')}
-                        </select>
-                    </div>
-                    <div class="iig-modal-field iig-modal-half">
-                        <label for="iig_standalone_size">Разрешение</label>
-                        <select id="iig_standalone_size" class="text_pole">
-                            ${VALID_IMAGE_SIZES.map(s => `<option value="${s}" ${s === (settings.imageSize || '1K') ? 'selected' : ''}>${s}</option>`).join('')}
-                        </select>
-                    </div>
-                </div>
-                <label class="checkbox_label" style="margin-top:4px;">
-                    <input type="checkbox" id="iig_standalone_refs" checked>
-                    <span>Отправить референсы (аватарки)</span>
-                </label>
-                <div id="iig_standalone_result" class="iig-modal-result" style="display:none;"></div>
-                <div id="iig_standalone_status" class="iig-modal-status" style="display:none;"></div>
-            </div>
-            <div class="iig-modal-footer">
-                <div id="iig_standalone_generate" class="menu_button"><i class="fa-solid fa-wand-magic-sparkles"></i> Сгенерировать</div>
-                <div id="iig_standalone_cancel" class="menu_button" style="display:none;"><i class="fa-solid fa-stop"></i> Отмена</div>
-                <div id="iig_standalone_insert" class="menu_button" style="display:none;"><i class="fa-solid fa-paper-plane"></i> Вставить в чат</div>
-                <div id="iig_standalone_save" class="menu_button" style="display:none;"><i class="fa-solid fa-floppy-disk"></i> Сохранить</div>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-
-    // Close modal
-    const closeModal = () => {
-        if (standaloneAbortController) { standaloneAbortController.abort(); standaloneAbortController = null; }
-        modal.remove();
-    };
-    modal.querySelector('.iig-modal-close').addEventListener('click', closeModal);
-    modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
-
-    // Generate
-    modal.querySelector('#iig_standalone_generate').addEventListener('click', () => standaloneGenerate(modal));
-
-    // Cancel
-    modal.querySelector('#iig_standalone_cancel').addEventListener('click', () => {
-        if (standaloneAbortController) { standaloneAbortController.abort(); standaloneAbortController = null; }
-    });
-
-    // Ctrl+Enter to generate
-    modal.querySelector('#iig_standalone_prompt').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault();
-            standaloneGenerate(modal);
-        }
-    });
-
-    // Focus prompt
-    setTimeout(() => modal.querySelector('#iig_standalone_prompt')?.focus(), 100);
-}
-
-async function standaloneGenerate(modal) {
-    const prompt = modal.querySelector('#iig_standalone_prompt')?.value?.trim();
-    if (!prompt) { toastr.warning('Введите промпт'); return; }
-
-    const style = modal.querySelector('#iig_standalone_style')?.value?.trim() || '';
-    const aspectRatio = modal.querySelector('#iig_standalone_ratio')?.value || '1:1';
-    const imageSize = modal.querySelector('#iig_standalone_size')?.value || '1K';
-    const sendRefs = modal.querySelector('#iig_standalone_refs')?.checked !== false;
-
-    const genBtn = modal.querySelector('#iig_standalone_generate');
-    const cancelBtn = modal.querySelector('#iig_standalone_cancel');
-    const insertBtn = modal.querySelector('#iig_standalone_insert');
-    const saveBtn = modal.querySelector('#iig_standalone_save');
-    const resultEl = modal.querySelector('#iig_standalone_result');
-    const statusEl = modal.querySelector('#iig_standalone_status');
-
-    genBtn.style.display = 'none';
-    cancelBtn.style.display = '';
-    insertBtn.style.display = 'none';
-    saveBtn.style.display = 'none';
-    resultEl.style.display = 'none';
-    statusEl.style.display = 'block';
-    statusEl.textContent = 'Подготовка...';
-    statusEl.className = 'iig-modal-status';
-
-    standaloneAbortController = new AbortController();
-
-    let references = [];
-    if (sendRefs) {
-        try {
-            statusEl.textContent = 'Сбор референсов...';
-            references = await collectReferenceImages(prompt);
-        } catch (_) { references = []; }
-    }
-
-    try {
-        validateSettings();
-        const dataUrl = await generateImageWithRetry(prompt, style, (s) => { statusEl.textContent = s; }, {
-            aspectRatio, imageSize, references, signal: standaloneAbortController.signal,
-        });
-
-        statusEl.textContent = 'Сохранение...';
-        const imagePath = await saveImageToFile(dataUrl);
-
-        // Show result
-        resultEl.style.display = 'block';
-        resultEl.innerHTML = `<img src="${imagePath}" class="iig-modal-result-img" alt="${prompt}">`;
-        statusEl.style.display = 'none';
-        cancelBtn.style.display = 'none';
-        genBtn.style.display = '';
-        genBtn.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i> Ещё раз';
-        insertBtn.style.display = '';
-        saveBtn.style.display = '';
-
-        // Store path for insert
-        resultEl.dataset.imagePath = imagePath;
-        resultEl.dataset.prompt = prompt;
-
-        // Insert into chat
-        insertBtn.onclick = async () => {
-            try {
-                const context = SillyTavern.getContext();
-                const chat = context.chat;
-                if (!chat || chat.length === 0) { toastr.warning('Нет активного чата'); return; }
-                // Find last bot message
-                let targetMsgId = -1;
-                for (let i = chat.length - 1; i >= 0; i--) {
-                    if (!chat[i].is_user) { targetMsgId = i; break; }
-                }
-                if (targetMsgId === -1) { toastr.warning('Нет сообщений бота для вставки'); return; }
-                const msg = chat[targetMsgId];
-                const imgTag = `\n\n![${prompt.substring(0, 50)}](${imagePath})`;
-                msg.mes += imgTag;
-                await context.saveChat();
-                // Re-render message
-                const mesEl = document.querySelector(`#chat .mes[mesid="${targetMsgId}"] .mes_text`);
-                if (mesEl && typeof context.messageFormatting === 'function') {
-                    mesEl.innerHTML = context.messageFormatting(msg.mes, msg.name, msg.is_system, msg.is_user, targetMsgId);
-                }
-                toastr.success('Картинка вставлена в чат');
-                modal.remove();
-            } catch (error) {
-                toastr.error(`Ошибка вставки: ${error.message}`);
-            }
-        };
-
-        // Save (download) button
-        saveBtn.onclick = () => {
-            const a = document.createElement('a');
-            a.href = imagePath;
-            a.download = `iig_standalone_${Date.now()}.png`;
-            a.click();
-            toastr.success('Картинка скачана');
-        };
-
-        toastr.success('Арт готов!', 'Генерация картинок', { timeOut: 2000 });
-    } catch (error) {
-        iigLog('ERROR', `Standalone generation failed: ${error.message}`);
-        statusEl.textContent = `Ошибка: ${error.message}`;
-        statusEl.className = 'iig-modal-status iig-modal-status-error';
-        cancelBtn.style.display = 'none';
-        genBtn.style.display = '';
-        genBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Сгенерировать';
-        if (standaloneAbortController?.signal?.aborted) {
-            statusEl.textContent = 'Генерация отменена';
-        } else {
-            toastr.error(`Ошибка: ${error.message}`);
-        }
-    } finally {
-        standaloneAbortController = null;
-    }
-}
-
-function addStandaloneButton() {
-    if (document.getElementById('iig_standalone_btn')) return;
-    const sendForm = document.getElementById('leftSendForm') || document.getElementById('send_form');
-    if (!sendForm) return;
-
-    const btn = document.createElement('div');
-    btn.id = 'iig_standalone_btn';
-    btn.className = 'iig-standalone-btn interactable';
-    btn.title = 'Сгенерировать арт';
-    btn.tabIndex = 0;
-    btn.innerHTML = '<i class="fa-solid fa-palette"></i>';
-    btn.addEventListener('click', () => createStandaloneModal());
-
-    // Insert into send form area
-    const sendBut = document.getElementById('send_but') || sendForm.querySelector('.fa-paper-plane')?.closest('div');
-    if (sendBut) {
-        sendBut.parentNode.insertBefore(btn, sendBut);
-    } else {
-        sendForm.appendChild(btn);
-    }
-}
-
-// ============================================================
 // INIT
 // ============================================================
 
@@ -2507,14 +2285,15 @@ function addStandaloneButton() {
     context.eventSource.on(context.event_types.APP_READY, () => {
         createSettingsUI();
         addButtonsToExistingMessages();
-        addStandaloneButton();
         updateWardrobeInjection();
         updateHairstyleInjection();
-        console.log('[IIG] Inline Image Generation v2.5 loaded');
+        console.log('[IIG] Inline Image Generation v2.6 loaded');
     });
 
     context.eventSource.on(context.event_types.CHAT_CHANGED, () => {
         setTimeout(() => {
+            // v2.6: Reset avatar refs to off on every chat switch
+            resetAvatarRefsForNewChat();
             addButtonsToExistingMessages();
             updateCharAvatarPreview();
             updateWardrobeInjection();
@@ -2526,5 +2305,5 @@ function addStandaloneButton() {
         await onMessageReceived(messageId);
     });
 
-    console.log('[IIG] Inline Image Generation v2.5 initialized');
+    console.log('[IIG] Inline Image Generation v2.6 initialized');
 })();
