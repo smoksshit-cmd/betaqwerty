@@ -15,7 +15,7 @@
     function swLog(l, ...a) { (l === 'ERROR' ? console.error : l === 'WARN' ? console.warn : console.log)('[SW]', ...a); }
     function esc(t) { const d = document.createElement('div'); d.textContent = t || ''; return d.innerHTML; }
 
-    const swDefaults = Object.freeze({ wardrobes: {}, activeOutfits: {}, maxDimension: 512, showFloatingBtn: false });
+    const swDefaults = Object.freeze({ wardrobes: {}, activeOutfits: {}, maxDimension: 512, showFloatingBtn: false, visionEndpoint: '', visionApiKey: '', visionModel: '' });
 
     function swGetSettings() {
         const ctx = SillyTavern.getContext();
@@ -129,187 +129,121 @@
 
     /**
      * Analyze outfit image via vision model.
-     * Multi-strategy approach with detailed logging.
+     * Uses generateRaw with a CLEAN message array (no chat context) to prevent
+     * the model from continuing RP instead of describing clothing.
      */
     async function swAnalyzeOutfit(base64) {
         const ctx = SillyTavern.getContext();
-        const systemPrompt = 'You are a fashion catalog assistant. You ONLY describe clothing. You never roleplay, narrate, or write fiction. Respond with 1-2 sentences in English describing ONLY the garments, colors, fabrics, accessories, and shoes visible in the image. Nothing else.';
-        const userText = 'Describe ONLY the clothing, accessories, and shoes in this image in 1-2 short sentences.';
+        const swS = swGetSettings();
 
-        function cleanDesc(raw) {
-            if (!raw) return null;
-            const desc = raw.trim()
-                .replace(/^["'`]+|["'`]+$/g, '')
-                .replace(/^(Here|This|The image|I see|In this|The picture|The photo).{0,30}(shows?|features?|depicts?|displays?|contains?|includes?)\s*/i, '')
-                .replace(/^:\s*/, '')
-                .trim();
-            if (desc.length > 10 && desc.length < 500) return desc;
-            return null;
-        }
-
-        toastr.info('Анализ образа через Vision...', 'Гардероб', { timeOut: 20000 });
-
-        // ── Strategy 1: Direct fetch to ST chat-completions backend ──
-        try {
-            swLog('INFO', 'Vision Strategy 1: direct /api/backends/chat-completions/generate');
-            const generateResponse = await fetch('/api/backends/chat-completions/generate', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content || '',
-                },
-                body: JSON.stringify({
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        {
-                            role: 'user',
-                            content: [
-                                { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } },
-                                { type: 'text', text: userText },
-                            ],
-                        },
-                    ],
-                    max_tokens: 200,
-                    temperature: 0.3,
-                }),
-            });
-            if (generateResponse.ok) {
-                const data = await generateResponse.json();
-                const text = data?.choices?.[0]?.message?.content || data?.content || data?.response || (typeof data === 'string' ? data : '');
-                swLog('INFO', 'Strategy 1 raw response:', JSON.stringify(data).substring(0, 300));
-                const desc = cleanDesc(text);
-                if (desc) { swLog('INFO', 'Vision OK (strategy 1):', desc.substring(0, 100)); return desc; }
-                swLog('WARN', 'Strategy 1 returned empty/invalid description');
-            } else {
-                swLog('WARN', 'Strategy 1 HTTP error:', generateResponse.status, await generateResponse.text().catch(() => ''));
-            }
-        } catch (e) {
-            swLog('WARN', 'Strategy 1 failed:', e.message);
-        }
-
-        // ── Strategy 2: generateRaw with messages array ──
-        if (typeof ctx.generateRaw === 'function') {
+        // Strategy 0: Direct Vision API call (most reliable)
+        if (swS.visionEndpoint && swS.visionApiKey) {
             try {
-                swLog('INFO', 'Vision Strategy 2: generateRaw (messages array)');
-                const messages = [
-                    { role: 'system', content: systemPrompt },
-                    {
-                        role: 'user',
-                        content: [
-                            { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } },
-                            { type: 'text', text: userText },
-                        ],
-                    },
-                ];
-                const result = await ctx.generateRaw(messages, { maxTokens: 200, quiet: true });
-                swLog('INFO', 'Strategy 2 raw result:', String(result).substring(0, 300));
-                const desc = cleanDesc(result);
-                if (desc) { swLog('INFO', 'Vision OK (strategy 2a):', desc.substring(0, 100)); return desc; }
-            } catch (e) {
-                swLog('WARN', 'Strategy 2a failed:', e.message);
-            }
+                toastr.info('Анализ образа (Vision API)...', 'Гардероб', { timeOut: 20000 });
+                const visionModel = swS.visionModel || 'gpt-4o-mini';
+                const endpoint = swS.visionEndpoint.replace(/\/+$/, '');
+                const url = endpoint.includes('/chat/completions') ? endpoint : `${endpoint}/v1/chat/completions`;
 
-            // 2b: try with { prompt: messages } wrapper
-            try {
-                swLog('INFO', 'Vision Strategy 2b: generateRaw ({ prompt: messages })');
-                const messages = [
-                    { role: 'system', content: systemPrompt },
-                    {
-                        role: 'user',
-                        content: [
-                            { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } },
-                            { type: 'text', text: userText },
-                        ],
-                    },
-                ];
-                const result = await ctx.generateRaw({ prompt: messages, maxTokens: 200 });
-                swLog('INFO', 'Strategy 2b raw result:', String(result).substring(0, 300));
-                const desc = cleanDesc(result);
-                if (desc) { swLog('INFO', 'Vision OK (strategy 2b):', desc.substring(0, 100)); return desc; }
-            } catch (e) {
-                swLog('WARN', 'Strategy 2b failed:', e.message);
-            }
-        }
-
-        // ── Strategy 3: generateQuietPrompt with image ──
-        if (typeof ctx.generateQuietPrompt === 'function') {
-            // 3a: quietImage as data URL
-            try {
-                swLog('INFO', 'Vision Strategy 3a: generateQuietPrompt (quietImage)');
-                const result = await ctx.generateQuietPrompt(
-                    '[OOC: STOP ALL ROLEPLAY. You are a fashion catalog assistant now. Describe ONLY the clothing, accessories, and shoes visible in the attached image in 1-2 sentences in English. Do NOT write any narrative, dialogue, actions, or RP content.]',
-                    { quietImage: `data:image/png;base64,${base64}`, maxTokens: 200 }
-                );
-                swLog('INFO', 'Strategy 3a raw result:', String(result).substring(0, 300));
-                const desc = cleanDesc(result);
-                if (desc) { swLog('INFO', 'Vision OK (strategy 3a):', desc.substring(0, 100)); return desc; }
-            } catch (e) {
-                swLog('WARN', 'Strategy 3a failed:', e.message);
-            }
-
-            // 3b: image as second argument string
-            try {
-                swLog('INFO', 'Vision Strategy 3b: generateQuietPrompt (image arg)');
-                const result = await ctx.generateQuietPrompt(
-                    '[OOC: STOP ALL ROLEPLAY. Describe ONLY the clothing in the attached image in 1-2 English sentences. No RP.]',
-                    `data:image/png;base64,${base64}`
-                );
-                swLog('INFO', 'Strategy 3b raw result:', String(result).substring(0, 300));
-                const desc = cleanDesc(result);
-                if (desc) { swLog('INFO', 'Vision OK (strategy 3b):', desc.substring(0, 100)); return desc; }
-            } catch (e) {
-                swLog('WARN', 'Strategy 3b failed:', e.message);
-            }
-        }
-
-        // ── Strategy 4: direct OpenAI-compatible fetch to the configured image gen endpoint ──
-        // (Some users have a separate OpenAI-compatible vision endpoint configured)
-        try {
-            const iigSettings = ctx.extensionSettings?.inline_image_gen;
-            const endpoint = iigSettings?.endpoint;
-            const apiKey = iigSettings?.apiKey;
-            if (endpoint && apiKey) {
-                swLog('INFO', 'Vision Strategy 4: direct OpenAI fetch to', endpoint);
-                // Normalize endpoint to chat completions
-                let chatUrl = endpoint.replace(/\/?$/, '');
-                if (!chatUrl.includes('/chat/completions')) {
-                    chatUrl = chatUrl.replace(/\/v1\/?$/, '') + '/v1/chat/completions';
-                }
-                const resp = await fetch(chatUrl, {
+                const resp = await fetch(url, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${swS.visionApiKey}`,
+                    },
                     body: JSON.stringify({
-                        model: iigSettings?.model || 'gpt-4o-mini',
+                        model: visionModel,
+                        max_tokens: 200,
                         messages: [
-                            { role: 'system', content: systemPrompt },
+                            {
+                                role: 'system',
+                                content: 'You are a fashion catalog assistant. You ONLY describe clothing. You never roleplay, narrate, or write fiction. Respond with 1-2 sentences in English describing ONLY the garments, colors, fabrics, accessories, and shoes visible in the image. Nothing else.'
+                            },
                             {
                                 role: 'user',
                                 content: [
-                                    { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}`, detail: 'low' } },
-                                    { type: 'text', text: userText },
+                                    { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } },
+                                    { type: 'text', text: 'Describe the clothing in this image.' },
                                 ],
                             },
                         ],
-                        max_tokens: 200,
-                        temperature: 0.3,
                     }),
                 });
-                if (resp.ok) {
-                    const data = await resp.json();
-                    const text = data?.choices?.[0]?.message?.content || '';
-                    swLog('INFO', 'Strategy 4 raw response:', text.substring(0, 300));
-                    const desc = cleanDesc(text);
-                    if (desc) { swLog('INFO', 'Vision OK (strategy 4):', desc.substring(0, 100)); return desc; }
-                } else {
-                    swLog('WARN', 'Strategy 4 HTTP error:', resp.status);
+
+                if (!resp.ok) {
+                    const errText = await resp.text().catch(() => resp.statusText);
+                    throw new Error(`HTTP ${resp.status}: ${errText.substring(0, 200)}`);
                 }
+
+                const data = await resp.json();
+                const raw = data?.choices?.[0]?.message?.content || '';
+                const desc = raw.trim()
+                    .replace(/^["'`]+|["'`]+$/g, '')
+                    .replace(/^(Here|This|The image|I see|In this).{0,20}(shows?|features?|depicts?|displays?)\s*/i, '');
+
+                if (desc && desc.length > 10 && desc.length < 500) {
+                    swLog('INFO', 'Auto-described via Vision API:', desc.substring(0, 100));
+                    return desc;
+                } else {
+                    swLog('WARN', 'Vision API returned empty/invalid desc:', raw.substring(0, 100));
+                }
+            } catch (e) {
+                swLog('ERROR', 'Direct Vision API failed:', e.message);
+                toastr.error('Vision API ошибка: ' + e.message.substring(0, 100), 'Гардероб');
             }
-        } catch (e) {
-            swLog('WARN', 'Strategy 4 failed:', e.message);
         }
 
-        swLog('ERROR', 'All vision strategies failed — описание не сгенерировано. Проверьте консоль (F12) для деталей.');
-        toastr.warning('Vision-анализ не удался. Проверьте, поддерживает ли ваш API модели с vision (GPT-4o, Claude, Gemini Pro Vision и т.д.)', 'Гардероб', { timeOut: 8000 });
+        // Strategy 1: generateRaw with isolated vision messages (NO chat context)
+        if (typeof ctx.generateRaw === 'function') {
+            try {
+                toastr.info('Анализ образа...', 'Гардероб', { timeOut: 15000 });
+                const messages = [
+                    {
+                        role: 'system',
+                        content: 'You are a fashion catalog assistant. You ONLY describe clothing. You never roleplay, narrate, or write fiction. Respond with 1-2 sentences in English describing ONLY the garments, colors, fabrics, accessories, and shoes visible in the image. Nothing else.'
+                    },
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } },
+                            { type: 'text', text: 'Describe the clothing in this image.' },
+                        ],
+                    },
+                ];
+                const result = await ctx.generateRaw({ prompt: messages, maxTokens: 150 });
+                const desc = (result || '').trim()
+                    // Strip any accidental markdown/quotes
+                    .replace(/^["'`]+|["'`]+$/g, '')
+                    .replace(/^(Here|This|The image|I see|In this).{0,20}(shows?|features?|depicts?|displays?)\s*/i, '');
+                if (desc && desc.length > 10 && desc.length < 500) {
+                    swLog('INFO', 'Auto-described via generateRaw:', desc.substring(0, 100));
+                    return desc;
+                }
+            } catch (e) {
+                swLog('WARN', 'generateRaw vision failed:', e.message);
+            }
+        }
+
+        // Strategy 2: generateQuietPrompt fallback (sends chat context, might RP)
+        if (typeof ctx.generateQuietPrompt === 'function') {
+            try {
+                toastr.info('Анализ образа (fallback)...', 'Гардероб', { timeOut: 15000 });
+                const result = await ctx.generateQuietPrompt({
+                    quietPrompt: '[OOC: STOP ROLEPLAY. You are now a fashion assistant. Describe ONLY the clothing visible in the attached image in 1-2 sentences in English. List garments, colors, fabrics, accessories, shoes. Do NOT write any narrative, dialogue, or RP content.]',
+                    quietImage: `data:image/png;base64,${base64}`,
+                    maxTokens: 150,
+                });
+                const desc = (result || '').trim()
+                    .replace(/^["'`]+|["'`]+$/g, '');
+                if (desc && desc.length > 10 && desc.length < 500) {
+                    swLog('INFO', 'Auto-described via quietPrompt:', desc.substring(0, 100));
+                    return desc;
+                }
+            } catch (e) {
+                swLog('WARN', 'generateQuietPrompt failed:', e.message);
+            }
+        }
+
+        swLog('WARN', 'Auto-describe unavailable');
         return null;
     }
 
@@ -2987,6 +2921,20 @@ function createSettingsUI() {
                             <label for="sw_max_dim">Макс. размер (px)</label>
                             <input type="number" id="sw_max_dim" class="text_pole flex1" value="512" min="128" max="1024" step="64">
                         </div>
+                        <hr style="margin:10px 0;border-color:var(--SmartThemeBorderColor,#444);">
+                        <p class="hint" style="margin-bottom:6px;"><b>Vision API</b> — для авто-описания аутфитов. OpenAI-совместимый endpoint (OpenAI, OpenRouter, и т.д.)</p>
+                        <div class="flex-row" style="margin-top:4px;">
+                            <label for="sw_vision_endpoint" style="min-width:70px;">Endpoint</label>
+                            <input type="text" id="sw_vision_endpoint" class="text_pole flex1" placeholder="https://api.openai.com или https://openrouter.ai/api">
+                        </div>
+                        <div class="flex-row" style="margin-top:4px;">
+                            <label for="sw_vision_key" style="min-width:70px;">API Key</label>
+                            <input type="password" id="sw_vision_key" class="text_pole flex1" placeholder="sk-...">
+                        </div>
+                        <div class="flex-row" style="margin-top:4px;">
+                            <label for="sw_vision_model" style="min-width:70px;">Модель</label>
+                            <input type="text" id="sw_vision_model" class="text_pole flex1" placeholder="gpt-4o-mini">
+                        </div>
                     </div>
 
                     <div class="iig-settings-card">
@@ -3356,6 +3304,18 @@ function bindSettingsEvents() {
             ctx.saveSettingsDebounced();
         }
     });
+
+    // ── Vision API handlers ──
+    const swVisionCtx = SillyTavern.getContext();
+    const swVisionS = swVisionCtx.extensionSettings.silly_wardrobe;
+    if (swVisionS) {
+        const elEndpoint = document.getElementById('sw_vision_endpoint');
+        const elKey = document.getElementById('sw_vision_key');
+        const elModel = document.getElementById('sw_vision_model');
+        if (elEndpoint) { elEndpoint.value = swVisionS.visionEndpoint || ''; elEndpoint.addEventListener('change', () => { swVisionS.visionEndpoint = elEndpoint.value.trim(); swVisionCtx.saveSettingsDebounced(); }); }
+        if (elKey) { elKey.value = swVisionS.visionApiKey || ''; elKey.addEventListener('change', () => { swVisionS.visionApiKey = elKey.value.trim(); swVisionCtx.saveSettingsDebounced(); }); }
+        if (elModel) { elModel.value = swVisionS.visionModel || ''; elModel.addEventListener('change', () => { swVisionS.visionModel = elModel.value.trim(); swVisionCtx.saveSettingsDebounced(); }); }
+    }
 
     // Apply initial state
     updateVisibility();
