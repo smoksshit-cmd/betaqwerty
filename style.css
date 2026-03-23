@@ -1,14 +1,24 @@
 /* ═══════════════════════════════════════════════════════════════
-   Facts Memory Tracker — style.css  v1.3.5
+   Facts Memory Tracker — style.css  v1.3.6
    SRT-style drawer open/close mechanism
+   Fix: Desktop-mode-on-mobile layout breakage
    ═══════════════════════════════════════════════════════════════ */
+
+/* Prevent FMT fixed elements from expanding page scrollWidth
+   in "Request Desktop Site" mode on mobile browsers.
+   This is scoped: only affects horizontal overflow from
+   position:fixed elements that JS places beyond visible area. */
+html:has(#fmt_fab),
+html:has(#fmt_drawer) {
+  overflow-x: clip !important;
+}
 
 /* ─── FAB ────────────────────────────────────────────────────────── */
 
 #fmt_fab {
   position: fixed;
   z-index: 9500;
-  display: flex;
+  display: none; /* JS shows it */
   align-items: flex-start;
   gap: 2px;
   user-select: none;
@@ -16,10 +26,10 @@
   overflow: visible;
   opacity: 0.42;
   transition: opacity 0.2s;
-  /* Prevent expanding page width */
+  /* Use right instead of left to never push scrollWidth */
   right: 14px;
   top: 50%;
-  left: auto;
+  left: auto !important;
   bottom: auto;
   max-width: 72px;
   contain: layout;
@@ -94,16 +104,20 @@
 #fmt_overlay {
   display: none;
   position: fixed !important;
-  inset: 0;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100vw !important;
   z-index: 9998;
   background: rgba(0, 0, 0, 0.35);
   cursor: default;
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
-  /* Prevent affecting layout */
-  width: 100% !important;
-  height: 100% !important;
   contain: strict;
+  overflow: hidden !important;
 }
 
 /* ─── Drawer (SRT-style: visibility + pointer-events + !important) ── */
@@ -119,21 +133,23 @@
   padding-bottom: env(safe-area-inset-bottom, 0px);
   max-height: calc(100dvh - env(safe-area-inset-bottom, 0px));
   width: min(440px, 94vw);
+  max-width: 100vw;
   z-index: 10000 !important;
 
-  /* SRT-style: hide with three methods + !important */
-  transform: translateX(110%) !important;
+  /* SRT-style: hide — but use clip-path to prevent scrollWidth expansion */
+  transform: translateX(100%) !important;
   visibility: hidden !important;
   pointer-events: none !important;
+  clip-path: inset(0 0 0 0) !important;
 
   /* Prevent hidden drawer from expanding page scrollWidth */
   overflow: hidden !important;
-  contain: layout style paint !important;
+  contain: strict !important;
 
   transition: transform 150ms ease-in-out, visibility 0s linear 150ms;
   background: linear-gradient(135deg, #0d0d0d 0%, #1a1a2e 100%);
   border-left: 1px solid rgba(100,160,255,0.15);
-  box-shadow: -20px 0 40px rgba(0,0,0,0.35);
+  box-shadow: none;
   display: flex !important;
   flex-direction: column;
   color: #eee;
@@ -146,7 +162,10 @@
   transform: translateX(0) !important;
   visibility: visible !important;
   pointer-events: auto !important;
+  clip-path: none !important;
   overflow: hidden auto !important;
+  contain: layout style paint !important;
+  box-shadow: -20px 0 40px rgba(0,0,0,0.35);
   transition: transform 150ms ease-in-out, visibility 0s linear 0s;
 }
 
