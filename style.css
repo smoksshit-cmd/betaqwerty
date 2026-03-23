@@ -102,47 +102,53 @@
   #fmt_overlay {
     bottom: 80dvh;
     background: rgba(0,0,0,0.3);
-    pointer-events: none; /* не перехватывать тапы по drawer на мобиле */
   }
 }
 
 /* ─── Drawer — DESKTOP ───────────────────────────────────────────── */
 
+/* Closed: slid off + invisible + non-interactive (SRT pattern) */
 #fmt_drawer {
-  position: fixed;
-  top: 0;
-  right: 0;
+  position: fixed !important;
+  top: 0 !important;
+  right: 0 !important;
   width: 390px;
   max-width: 92vw;
   height: 100dvh;
-  /* Above overlay (9650) */
-  z-index: 9700;
-  display: flex;
+  z-index: 9700 !important;
+  display: flex !important;
   flex-direction: column;
   background: #18212e;
   border-left: 1px solid rgba(100,160,255,0.15);
   box-shadow: -6px 0 36px rgba(0,0,0,0.65);
-  transform: translateX(110%);
-  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
   overflow: hidden;
-  /* NO contain — it breaks stacking context and kills click events on children */
+  /* Hidden three ways — same as SRT */
+  transform: translateX(110%) !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+              visibility 0s linear 0.28s;
+}
+
+/* Open: fully visible and interactive */
+#fmt_drawer.fmt-open {
+  transform: translateX(0) !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+              visibility 0s linear 0s;
+}
+
+/* All children receive clicks when open */
+#fmt_drawer.fmt-open * {
   pointer-events: auto;
 }
 
-/* Guarantee close buttons and all footer buttons always receive clicks */
-#fmt_close,
-#fmt_close2,
-#fmt_drawer .footer button,
-#fmt_drawer header button {
-  position: relative;
-  z-index: 10;
+/* Extra guarantee for close buttons */
+#fmt_drawer #fmt_close,
+#fmt_drawer #fmt_close2 {
   pointer-events: auto !important;
-  cursor: pointer;
-  touch-action: manipulation; /* быстрый отклик на тап без задержки 300ms */
-}
-
-#fmt_drawer.fmt-open {
-  transform: translateX(0);
+  cursor: pointer !important;
 }
 
 /* ─── Drawer — MOBILE (≤600px): bottom sheet ────────────────────── */
@@ -154,27 +160,32 @@
 
 @media (max-width: 600px) {
   #fmt_drawer {
-    /* Reset desktop side-drawer positioning */
-    top: auto;
+    top: auto !important;
     right: 0;
     left: 0;
     bottom: 0;
     width: 100%;
     max-width: 100%;
-    /* 80dvh so top portion of chat peeks above */
     height: 80dvh;
     max-height: 80dvh;
     border-left: none;
     border-top: 1px solid rgba(100,160,255,0.2);
     border-radius: 16px 16px 0 0;
     box-shadow: 0 -8px 40px rgba(0,0,0,0.7);
-    /* Slide up from bottom */
-    transform: translateY(110%);
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    /* Slide up — hidden state */
+    transform: translateY(110%) !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                visibility 0s linear 0.3s;
   }
 
   #fmt_drawer.fmt-open {
-    transform: translateY(0);
+    transform: translateY(0) !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                visibility 0s linear 0s;
   }
 
   /* Drag handle pill at top of bottom sheet */
