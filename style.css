@@ -1,24 +1,14 @@
 /* ═══════════════════════════════════════════════════════════════
-   Facts Memory Tracker — style.css  v1.3.6
-   SRT-style drawer open/close mechanism
-   Fix: Desktop-mode-on-mobile layout breakage
+   Facts Memory Tracker — style.css  v1.3.5
+   Mobile fix: bottom sheet on mobile, overlay pointer-events only
    ═══════════════════════════════════════════════════════════════ */
-
-/* Prevent FMT fixed elements from expanding page scrollWidth
-   in "Request Desktop Site" mode on mobile browsers.
-   This is scoped: only affects horizontal overflow from
-   position:fixed elements that JS places beyond visible area. */
-html:has(#fmt_fab),
-html:has(#fmt_drawer) {
-  overflow-x: clip !important;
-}
 
 /* ─── FAB ────────────────────────────────────────────────────────── */
 
 #fmt_fab {
   position: fixed;
   z-index: 9500;
-  display: none; /* JS shows it */
+  display: flex;
   align-items: flex-start;
   gap: 2px;
   user-select: none;
@@ -26,13 +16,6 @@ html:has(#fmt_drawer) {
   overflow: visible;
   opacity: 0.42;
   transition: opacity 0.2s;
-  /* Use right instead of left to never push scrollWidth */
-  right: 14px;
-  top: 50%;
-  left: auto !important;
-  bottom: auto;
-  max-width: 72px;
-  contain: layout;
 }
 
 #fmt_fab:hover,
@@ -99,81 +82,146 @@ html:has(#fmt_drawer) {
   color: #fff;
 }
 
-/* ─── Overlay (SRT-style) ────────────────────────────────────────── */
+/* ─── Overlay ────────────────────────────────────────────────────── */
 
 #fmt_overlay {
   display: none;
-  position: fixed !important;
-  top: 0 !important;
-  left: 0 !important;
-  right: 0 !important;
-  bottom: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  max-width: 100vw !important;
-  z-index: 9998;
-  background: rgba(0, 0, 0, 0.35);
-  cursor: default;
-  touch-action: none;
-  -webkit-tap-highlight-color: transparent;
-  contain: strict;
-  overflow: hidden !important;
+  position: fixed;
+  inset: 0;
+  z-index: 9650;
+  background: rgba(0,0,0,0.45);
+  /* NO backdrop-filter — it creates a new stacking context and breaks
+     z-index relationships, causing the drawer's children to lose clicks */
+  pointer-events: auto;
 }
 
-/* ─── Drawer (SRT-style: visibility + pointer-events + !important) ── */
+/* On mobile the drawer is a bottom sheet covering 80dvh.
+   Overlay must only cover the top 20% that peeks above the sheet,
+   otherwise it intercepts taps on drawer buttons. */
+@media (max-width: 600px) {
+  #fmt_overlay {
+    bottom: 80dvh;
+    background: rgba(0,0,0,0.3);
+  }
+}
 
+/* ─── Drawer — DESKTOP ───────────────────────────────────────────── */
+
+/* Closed: slid off + invisible + non-interactive (SRT pattern) */
 #fmt_drawer {
   position: fixed !important;
-  right: 0 !important;
   top: 0 !important;
-  left: auto !important;
-  bottom: auto !important;
-  height: 100vh !important;
-  height: 100dvh !important;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-  max-height: calc(100dvh - env(safe-area-inset-bottom, 0px));
-  width: min(440px, 94vw);
-  max-width: 100vw;
-  z-index: 10000 !important;
-
-  /* SRT-style: hide — but use clip-path to prevent scrollWidth expansion */
-  transform: translateX(100%) !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
-  clip-path: inset(0 0 0 0) !important;
-
-  /* Prevent hidden drawer from expanding page scrollWidth */
-  overflow: hidden !important;
-  contain: strict !important;
-
-  transition: transform 150ms ease-in-out, visibility 0s linear 150ms;
-  background: linear-gradient(135deg, #0d0d0d 0%, #1a1a2e 100%);
-  border-left: 1px solid rgba(100,160,255,0.15);
-  box-shadow: none;
+  right: 0 !important;
+  width: 390px;
+  max-width: 92vw;
+  height: 100dvh;
+  z-index: 9700 !important;
   display: flex !important;
   flex-direction: column;
-  color: #eee;
-  font-family: Consolas, monospace;
-  box-sizing: border-box;
+  background: #18212e;
+  border-left: 1px solid rgba(100,160,255,0.15);
+  box-shadow: -6px 0 36px rgba(0,0,0,0.65);
+  overflow: hidden;
+  /* Hidden three ways — same as SRT */
+  transform: translateX(110%) !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+              visibility 0s linear 0.28s;
 }
 
-/* SRT-style: fmt-open class overrides with !important */
+/* Open: fully visible and interactive */
 #fmt_drawer.fmt-open {
   transform: translateX(0) !important;
   visibility: visible !important;
   pointer-events: auto !important;
-  clip-path: none !important;
-  overflow: hidden auto !important;
-  contain: layout style paint !important;
-  box-shadow: -20px 0 40px rgba(0,0,0,0.35);
-  transition: transform 150ms ease-in-out, visibility 0s linear 0s;
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+              visibility 0s linear 0s;
 }
 
-/* SRT-style: ensure close buttons always clickable */
+/* All children receive clicks when open */
+#fmt_drawer.fmt-open * {
+  pointer-events: auto;
+}
+
+/* Extra guarantee for close buttons */
 #fmt_drawer #fmt_close,
 #fmt_drawer #fmt_close2 {
   pointer-events: auto !important;
   cursor: pointer !important;
+}
+
+/* ─── Drawer — MOBILE (≤600px): bottom sheet ────────────────────── */
+/*
+   On mobile, the drawer slides up from the bottom as a sheet.
+   It takes up 80dvh so the top ~20% of the chat stays visible.
+   The chat itself is NEVER pushed or resized — the drawer floats above it.
+*/
+
+@media (max-width: 600px) {
+  #fmt_drawer {
+    top: auto !important;
+    right: 0;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    max-width: 100%;
+    height: 80dvh;
+    max-height: 80dvh;
+    border-left: none;
+    border-top: 1px solid rgba(100,160,255,0.2);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -8px 40px rgba(0,0,0,0.7);
+    /* Slide up — hidden state */
+    transform: translateY(110%) !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                visibility 0s linear 0.3s;
+  }
+
+  #fmt_drawer.fmt-open {
+    transform: translateY(0) !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                visibility 0s linear 0s;
+  }
+
+  /* Drag handle pill at top of bottom sheet */
+  #fmt_drawer::before {
+    content: '';
+    display: block;
+    width: 40px;
+    height: 4px;
+    background: rgba(100,160,255,0.25);
+    border-radius: 2px;
+    margin: 8px auto 0;
+    flex-shrink: 0;
+  }
+
+  /* Tighten header on mobile */
+  #fmt_drawer header {
+    padding: 6px 12px 6px;
+  }
+
+  #fmt_drawer .title {
+    font-size: 12px;
+  }
+
+  /* Footer buttons: 2-column grid on mobile */
+  #fmt_drawer .footer {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 4px;
+    padding: 7px 10px;
+  }
+
+  #fmt_drawer .footer button {
+    min-width: 0;
+    font-size: 10px;
+    padding: 5px 4px;
+  }
 }
 
 /* Header */
@@ -321,6 +369,8 @@ html:has(#fmt_drawer) {
   padding: 10px 12px 6px;
   scrollbar-width: thin;
   scrollbar-color: rgba(100,160,255,0.22) transparent;
+  /* Prevent content scroll from propagating to page on mobile */
+  overscroll-behavior: contain;
 }
 
 #fmt_content::-webkit-scrollbar { width: 5px; }
@@ -524,9 +574,10 @@ html:has(#fmt_drawer) {
 .fmt-inline-imp:focus { outline: none; }
 .fmt-inline-imp option { background: #18212e; color: #d8e8ff; }
 
-/* Toggle & delete buttons — hidden until hover */
+/* Toggle, flash & delete buttons — hidden until hover */
 .fmt-toggle-btn,
-.fmt-delete-btn {
+.fmt-delete-btn,
+.fmt-flash-btn {
   background: none;
   border: none;
   cursor: pointer;
@@ -540,9 +591,18 @@ html:has(#fmt_drawer) {
 
 .fmt-fact-row:hover .fmt-toggle-btn { color: rgba(150,190,255,0.5); }
 .fmt-fact-row:hover .fmt-delete-btn { color: rgba(200,80,80,0.45); }
+.fmt-fact-row:hover .fmt-flash-btn  { color: rgba(255,200,60,0.5); }
+
+/* On touch devices always show action buttons (no hover) */
+@media (hover: none) {
+  .fmt-toggle-btn { color: rgba(150,190,255,0.35) !important; }
+  .fmt-delete-btn { color: rgba(200,80,80,0.35) !important; }
+  .fmt-flash-btn  { color: rgba(255,200,60,0.35) !important; }
+}
 
 .fmt-toggle-btn:hover { background: rgba(100,160,255,0.15) !important; color: #90b8f8 !important; }
 .fmt-delete-btn:hover { background: rgba(200,80,80,0.15) !important; color: #ff6060 !important; }
+.fmt-flash-btn:hover  { background: rgba(255,200,60,0.15) !important; color: #ffd040 !important; }
 
 .fmt-fact-disabled .fmt-toggle-btn { color: rgba(100,210,130,0.6) !important; }
 
@@ -579,7 +639,6 @@ html:has(#fmt_drawer) {
   font-weight: 600;
   transition: background 0.15s, border-color 0.15s;
   white-space: nowrap;
-  font-family: Consolas, monospace;
 }
 
 #fmt_drawer .footer button:hover {
@@ -592,43 +651,14 @@ html:has(#fmt_drawer) {
 #fmt_clear_btn { border-color: rgba(200,80,80,0.18) !important; color: rgba(210,140,140,0.8) !important; }
 #fmt_clear_btn:hover { background: rgba(180,60,60,0.18) !important; }
 
-/* Drawer buttons general */
-#fmt_drawer button {
-  border: 1px solid rgba(100,160,255,0.18);
-  background: rgba(255,255,255,0.06);
-  color: #eee;
-  border-radius: 10px;
-  padding: 6px 10px;
-  cursor: pointer;
-  font-family: Consolas, monospace;
-  font-size: 12px;
+/* Close button in footer — always clearly visible */
+#fmt_close2 {
+  border-color: rgba(100,160,255,0.35) !important;
+  color: #c8deff !important;
+  font-weight: 700 !important;
 }
-#fmt_drawer button:hover { background: rgba(255,255,255,0.10); }
-
-/* ─── Mobile + tablet: drawer safe-area ──────────────────────────── */
-@media (max-width: 1024px) {
-  #fmt_drawer {
-    top: env(safe-area-inset-top, 0px) !important;
-    height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) !important;
-    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-    width: min(500px, 92vw);
-    margin-bottom: 0;
-  }
-  #fmt_drawer .footer {
-    padding-bottom: max(10px, env(safe-area-inset-bottom, 10px));
-    flex-wrap: wrap;
-    gap: 5px;
-  }
-  #fmt_drawer .footer button {
-    font-size: 11px;
-    padding: 7px 8px;
-  }
-}
-
-@media (max-width: 520px) {
-  #fmt_drawer { width: 100vw !important; border-left: none; }
-  .fmt-filters { gap: 3px; padding: 6px 10px; }
-  .fmt-filter-btn { padding: 2px 7px; font-size: 11px; }
+#fmt_close2:hover {
+  background: rgba(100,160,255,0.18) !important;
 }
 
 /* ─── Settings panel ─────────────────────────────────────────────── */
@@ -806,7 +836,6 @@ html:has(#fmt_drawer) {
 
 #fmt_prompt_tpl:focus { outline: none; border-color: rgba(100,160,255,0.5); }
 
-
 /* ─── Flashback queue panel ──────────────────────────────────────── */
 
 #fmt_flash_panel {
@@ -817,6 +846,7 @@ html:has(#fmt_drawer) {
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: rgba(255,200,60,0.2) transparent;
+  overscroll-behavior: contain;
 }
 
 .fmt-fq-section { padding: 6px 12px 5px; }
@@ -906,10 +936,9 @@ html:has(#fmt_drawer) {
 .fmt-fq-row:hover .fmt-fq-remove { color: rgba(200,80,80,0.5); }
 .fmt-fq-remove:hover { color: #ff6060 !important; background: rgba(200,80,80,0.12); }
 
-/* ─── API mode switcher */
-.fmt-api-mode-bar {
-  margin-bottom: 8px;
-}
+/* ─── API mode switcher ──────────────────────────────────────────── */
+
+.fmt-api-mode-bar { margin-bottom: 8px; }
 
 .fmt-api-mode-label {
   font-size: 10px;
@@ -959,30 +988,8 @@ html:has(#fmt_drawer) {
   line-height: 1.6;
 }
 
+/* ─── Flashback highlight on fact row ───────────────────────────── */
 
-
-.fmt-flash-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 11px;
-  padding: 1px 3px;
-  border-radius: 4px;
-  flex-shrink: 0;
-  color: transparent;
-  transition: color 0.13s, background 0.13s;
-}
-
-.fmt-fact-row:hover .fmt-flash-btn {
-  color: rgba(255,200,60,0.5);
-}
-
-.fmt-flash-btn:hover {
-  background: rgba(255,200,60,0.15) !important;
-  color: #ffd040 !important;
-}
-
-/* Highlight when fact is chosen for flashback */
 @keyframes fmt-flash-pulse {
   0%   { box-shadow: 0 0 0 0 rgba(255,200,60,0.5); }
   60%  { box-shadow: 0 0 0 6px rgba(255,200,60,0); }
@@ -1003,4 +1010,18 @@ html:has(#fmt_drawer) {
 
 #fmt_flashback_btn:hover {
   background: rgba(200,160,20,0.2) !important;
+}
+
+/* ─── Mobile extras ──────────────────────────────────────────────── */
+
+@media (max-width: 520px) {
+  .fmt-filters { gap: 3px; padding: 6px 10px; }
+  .fmt-filter-btn { padding: 2px 7px; font-size: 11px; }
+  .fmt-toolbar { padding: 6px 10px; }
+
+  /* Larger tap targets on touch */
+  .fmt-fact-row { padding: 7px 8px; }
+  .fmt-toggle-btn,
+  .fmt-delete-btn,
+  .fmt-flash-btn { font-size: 13px; padding: 3px 5px; }
 }
