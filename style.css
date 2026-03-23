@@ -1,5 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════
    Facts Memory Tracker — style.css  v1.3.5
+   SRT-style drawer open/close mechanism
    ═══════════════════════════════════════════════════════════════ */
 
 /* ─── FAB ────────────────────────────────────────────────────────── */
@@ -87,57 +88,51 @@
   display: none;
   position: fixed !important;
   inset: 0;
-  z-index: 9600;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
+  z-index: 9998;
+  background: rgba(0, 0, 0, 0.35);
   cursor: default;
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
 }
 
-/* ─── Drawer (SRT-style triple-hide) ────────────────────────────── */
+/* ─── Drawer (SRT-style: visibility + pointer-events + !important) ── */
 
 #fmt_drawer {
   position: fixed !important;
   right: 0 !important;
   top: 0 !important;
-  width: 390px;
-  max-width: 98vw;
   height: 100vh !important;
   height: 100dvh !important;
   padding-bottom: env(safe-area-inset-bottom, 0px);
   max-height: calc(100dvh - env(safe-area-inset-bottom, 0px));
-  z-index: 9700 !important;
-  display: flex !important;
-  flex-direction: column;
+  width: min(440px, 94vw);
+  z-index: 10000 !important;
 
-  /* Triple-hide: transform + visibility + pointer-events (mirrors SRT) */
+  /* SRT-style: hide with three methods + !important */
   transform: translateX(110%) !important;
   visibility: hidden !important;
   pointer-events: none !important;
 
-  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-              visibility 0s linear 0.28s;
-
-  background: #18212e;
+  transition: transform 150ms ease-in-out, visibility 0s linear 150ms;
+  background: linear-gradient(135deg, #0d0d0d 0%, #1a1a2e 100%);
   border-left: 1px solid rgba(100,160,255,0.15);
-  box-shadow: -6px 0 36px rgba(0,0,0,0.65);
-  overflow: hidden;
+  box-shadow: -20px 0 40px rgba(0,0,0,0.35);
+  display: flex !important;
+  flex-direction: column;
   color: #eee;
+  font-family: Consolas, monospace;
   box-sizing: border-box;
 }
 
-/* fmt-open class lifts all three hides simultaneously */
+/* SRT-style: fmt-open class overrides with !important */
 #fmt_drawer.fmt-open {
   transform: translateX(0) !important;
   visibility: visible !important;
   pointer-events: auto !important;
-  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-              visibility 0s linear 0s;
+  transition: transform 150ms ease-in-out, visibility 0s linear 0s;
 }
 
-/* Ensure close buttons are always clickable inside the open drawer */
+/* SRT-style: ensure close buttons always clickable */
 #fmt_drawer #fmt_close,
 #fmt_drawer #fmt_close2 {
   pointer-events: auto !important;
@@ -413,11 +408,14 @@
   border-color: rgba(100,160,255,0.16);
 }
 
+/* Disabled state */
 .fmt-fact-disabled { opacity: 0.35; }
 .fmt-fact-disabled .fmt-fact-text { text-decoration: line-through; color: rgba(180,200,240,0.45); }
 
+/* Hidden by filter/search */
 .fmt-row-hidden { display: none !important; }
 
+/* Inline category select */
 .fmt-inline-cat {
   background: transparent;
   border: none;
@@ -453,6 +451,7 @@
 
 .fmt-fact-text:hover { color: #e0efff; }
 
+/* Inline text edit input */
 .fmt-edit-input {
   flex: 1;
   padding: 2px 6px;
@@ -473,6 +472,7 @@
   flex-shrink: 0;
 }
 
+/* Inline importance select */
 .fmt-inline-imp {
   background: transparent;
   border: none;
@@ -487,6 +487,7 @@
 .fmt-inline-imp:focus { outline: none; }
 .fmt-inline-imp option { background: #18212e; color: #d8e8ff; }
 
+/* Toggle & delete buttons — hidden until hover */
 .fmt-toggle-btn,
 .fmt-delete-btn {
   background: none;
@@ -508,6 +509,7 @@
 
 .fmt-fact-disabled .fmt-toggle-btn { color: rgba(100,210,130,0.6) !important; }
 
+/* Empty state */
 .fmt-empty {
   text-align: center;
   padding: 32px 16px;
@@ -525,7 +527,6 @@
   background: #141d2d;
   border-top: 1px solid rgba(100,160,255,0.1);
   flex-shrink: 0;
-  padding-bottom: max(9px, env(safe-area-inset-bottom, 9px));
 }
 
 #fmt_drawer .footer button {
@@ -541,6 +542,7 @@
   font-weight: 600;
   transition: background 0.15s, border-color 0.15s;
   white-space: nowrap;
+  font-family: Consolas, monospace;
 }
 
 #fmt_drawer .footer button:hover {
@@ -552,6 +554,45 @@
 #fmt_scan_btn:hover { background: rgba(60,180,140,0.18) !important; }
 #fmt_clear_btn { border-color: rgba(200,80,80,0.18) !important; color: rgba(210,140,140,0.8) !important; }
 #fmt_clear_btn:hover { background: rgba(180,60,60,0.18) !important; }
+
+/* Drawer buttons general */
+#fmt_drawer button {
+  border: 1px solid rgba(100,160,255,0.18);
+  background: rgba(255,255,255,0.06);
+  color: #eee;
+  border-radius: 10px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
+#fmt_drawer button:hover { background: rgba(255,255,255,0.10); }
+
+/* ─── Mobile + tablet: drawer safe-area ──────────────────────────── */
+@media (max-width: 1024px) {
+  #fmt_drawer {
+    top: env(safe-area-inset-top, 0px) !important;
+    height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) !important;
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    width: min(500px, 92vw);
+    margin-bottom: 0;
+  }
+  #fmt_drawer .footer {
+    padding-bottom: max(10px, env(safe-area-inset-bottom, 10px));
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  #fmt_drawer .footer button {
+    font-size: 11px;
+    padding: 7px 8px;
+  }
+}
+
+@media (max-width: 520px) {
+  #fmt_drawer { width: 100vw !important; border-left: none; }
+  .fmt-filters { gap: 3px; padding: 6px 10px; }
+  .fmt-filter-btn { padding: 2px 7px; font-size: 11px; }
+}
 
 /* ─── Settings panel ─────────────────────────────────────────────── */
 
@@ -591,6 +632,7 @@
 
 .fmt-settings-body { padding: 4px 0 6px; }
 
+/* Accordion section */
 .fmt-sec {
   border-bottom: 1px solid rgba(100,160,255,0.07);
 }
@@ -626,6 +668,7 @@
   border-top: 1px solid rgba(100,160,255,0.06);
 }
 
+/* Compact 2-column checkbox row */
 .fmt-2col {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -633,6 +676,7 @@
   margin-bottom: 7px;
 }
 
+/* Compact checkbox label */
 .fmt-ck {
   display: flex;
   align-items: center;
@@ -645,6 +689,7 @@
 
 .fmt-ck input[type="checkbox"] { margin: 0; flex-shrink: 0; }
 
+/* General rows */
 .fmt-srow {
   display: flex;
   align-items: center;
@@ -669,6 +714,7 @@
 .fmt-slider-row input[type="range"] { flex: 1; min-width: 60px; accent-color: #5090e0; }
 .fmt-slider-row span { font-weight: 700; color: #90b8f8; min-width: 26px; text-align: right; font-size: 11px; }
 
+/* Compact action buttons */
 .fmt-compact-btns {
   display: flex;
   gap: 5px;
@@ -683,6 +729,7 @@
   min-width: 0;
 }
 
+/* API fields */
 .fmt-api-field {
   width: 100%;
   padding: 5px 9px;
@@ -721,6 +768,7 @@
 }
 
 #fmt_prompt_tpl:focus { outline: none; border-color: rgba(100,160,255,0.5); }
+
 
 /* ─── Flashback queue panel ──────────────────────────────────────── */
 
@@ -821,8 +869,7 @@
 .fmt-fq-row:hover .fmt-fq-remove { color: rgba(200,80,80,0.5); }
 .fmt-fq-remove:hover { color: #ff6060 !important; background: rgba(200,80,80,0.12); }
 
-/* ─── API mode switcher ──────────────────────────────────────────── */
-
+/* ─── API mode switcher */
 .fmt-api-mode-bar {
   margin-bottom: 8px;
 }
@@ -875,7 +922,7 @@
   line-height: 1.6;
 }
 
-/* ─── Flashback row button ───────────────────────────────────────── */
+
 
 .fmt-flash-btn {
   background: none;
@@ -898,6 +945,7 @@
   color: #ffd040 !important;
 }
 
+/* Highlight when fact is chosen for flashback */
 @keyframes fmt-flash-pulse {
   0%   { box-shadow: 0 0 0 0 rgba(255,200,60,0.5); }
   60%  { box-shadow: 0 0 0 6px rgba(255,200,60,0); }
@@ -910,6 +958,7 @@
   animation: fmt-flash-pulse 0.7s ease-out 2;
 }
 
+/* Footer flashback button */
 #fmt_flashback_btn {
   border-color: rgba(255,200,60,0.3) !important;
   color: #ffd040 !important;
@@ -917,21 +966,4 @@
 
 #fmt_flashback_btn:hover {
   background: rgba(200,160,20,0.2) !important;
-}
-
-/* ─── Mobile / tablet ────────────────────────────────────────────── */
-
-@media (max-width: 1024px) {
-  #fmt_drawer {
-    top: env(safe-area-inset-top, 0px) !important;
-    height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) !important;
-    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-    width: min(500px, 96vw);
-  }
-}
-
-@media (max-width: 520px) {
-  #fmt_drawer { width: 100vw; border-left: none; }
-  .fmt-filters { gap: 3px; padding: 6px 10px; }
-  .fmt-filter-btn { padding: 2px 7px; font-size: 11px; }
 }
