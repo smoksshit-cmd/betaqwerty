@@ -88,12 +88,21 @@
   display: none;
   position: fixed;
   inset: 0;
-  /* MUST be below drawer (9700) so drawer buttons are clickable */
   z-index: 9650;
   background: rgba(0,0,0,0.45);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
+  /* NO backdrop-filter — it creates a new stacking context and breaks
+     z-index relationships, causing the drawer's children to lose clicks */
   pointer-events: auto;
+}
+
+/* On mobile the drawer is a bottom sheet covering 80dvh.
+   Overlay must only cover the top 20% that peeks above the sheet,
+   otherwise it intercepts taps on drawer buttons. */
+@media (max-width: 600px) {
+  #fmt_overlay {
+    bottom: 80dvh;
+    background: rgba(0,0,0,0.3);
+  }
 }
 
 /* ─── Drawer — DESKTOP ───────────────────────────────────────────── */
@@ -115,9 +124,19 @@
   transform: translateX(110%);
   transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
   overflow: hidden;
-  contain: layout style;
-  /* Ensure all children receive pointer events */
+  /* NO contain — it breaks stacking context and kills click events on children */
   pointer-events: auto;
+}
+
+/* Guarantee close buttons and all footer buttons always receive clicks */
+#fmt_close,
+#fmt_close2,
+#fmt_drawer .footer button,
+#fmt_drawer header button {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto !important;
+  cursor: pointer;
 }
 
 #fmt_drawer.fmt-open {
@@ -175,13 +194,6 @@
 
   #fmt_drawer .title {
     font-size: 12px;
-  }
-
-  /* Overlay on mobile: lighter, no backdrop-filter (avoids stacking context bugs) */
-  #fmt_overlay {
-    background: rgba(0,0,0,0.25);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
   }
 
   /* Footer buttons: 2-column grid on mobile */
