@@ -1,15 +1,12 @@
 /**
  * Facts Memory Tracker (FMT) — SillyTavern Extension
- * v1.3.5
+ * v1.3.4
  *
- * Changes in v1.3.5:
- *  - openDrawer / ensureDrawer: ported SRT-style overlay + drawer logic:
- *      • overlay created via insertBefore (same z-stack order as SRT)
- *      • overlay closes drawer on both click AND touchstart (mobile fix)
- *      • drawer hidden via transform+visibility+pointer-events triple !important
- *        (overrides any ST theme that might show the panel)
- *      • srt-open → fmt-open class drives all three transitions
- *      • Escape key handler moved inside wireChatEvents (not top-level)
+ * Changes in v1.3.4:
+ *  - exportJson: file download button + copy, no await before Popup (same fix as SRT)
+ *  - importJson: file picker button + textarea, same Popup timing fix
+ *  - getMessages(): filters out hidden/system messages, lorebook injections,
+ *    summarise entries — only real user↔char dialogue goes to the scan prompt
  */
 
 (() => {
@@ -224,18 +221,36 @@
 
   // ─── Chat helpers ─────────────────────────────────────────────────────────────
 
+  /**
+   * Returns the last `count` REAL dialogue messages starting from `from`.
+   *
+   * Filtered OUT (never go to scan prompt):
+   *  - is_system === true           → system / hidden messages inserted by ST
+   *  - extra.type === 'summarize'   → built-in ST summarization entries
+   *  - extra.isSmallSys             → small system injections
+   *  - extra.isHidden               → hidden messages (e.g. deleted but kept)
+   *  - extra.type === 'narrator'    → narrator / story-mode injections
+   *  - mes starts with '<|' or '[inst' → raw instruction tokens leaking into chat
+   *  - name contains '[' and ']'    → typical lorebook/WI injected pseudomessages
+   *  - mes is empty / whitespace only
+   */
   function isRealDialogueMessage(m) {
     if (!m) return false;
+    // Skip system/hidden flags
     if (m.is_system)               return false;
     if (m.extra?.isSmallSys)       return false;
     if (m.extra?.isHidden)         return false;
+    // Skip summarization and narrator entries
     const eType = m.extra?.type || '';
     if (eType === 'summarize')     return false;
     if (eType === 'narrator')      return false;
     if (eType === 'chat_background') return false;
+    // Skip empty messages
     const mes = (m.mes || '').trim();
     if (!mes)                      return false;
+    // Skip raw instruction tokens that sometimes leak
     if (mes.startsWith('<|') || mes.startsWith('[inst')) return false;
+    // Skip lorebook/WI pseudomessages — their "name" field is typically wrapped in brackets
     const name = (m.name || '').trim();
     if (name.startsWith('[') && name.endsWith(']')) return false;
     return true;
@@ -245,6 +260,7 @@
     const { chat } = ctx();
     if (!Array.isArray(chat) || !chat.length) return { text: '', lastIdx: 0 };
 
+    // Collect real dialogue messages in the requested range
     const slice = chat
       .slice(Math.max(0, from), from + count)
       .filter(isRealDialogueMessage);
@@ -359,6 +375,7 @@
     const s    = getSettings();
     const base = getBaseUrl();
 
+    // ── Path 1: custom API (optional) ────────────────────────────────────────
     if (base) {
       const apiKey = (s.apiKey || '').trim();
       const headers = {
@@ -419,6 +436,7 @@
       toastr.warning('[FMT] Кастовый API недоступен — используется ST', '', { timeOut: 3000 });
     }
 
+    // ── Path 2: ST generateRaw ────────────────────────────────────────────────
     const c = ctx();
     if (typeof c.generateRaw !== 'function') {
       throw new Error(
@@ -433,7 +451,7 @@
         userPrompt,
         null,
         false,
-        true,
+        true,       // quietToChat = TRUE — ошибки не показываются в чате
         systemPrompt,
         true
       );
@@ -696,6 +714,7 @@
 
     const total = chat.length;
 
+    // No await — same Popup timing fix
     c.Popup.show.text('🎯 FMT — Сканировать диапазон',
       `<div style="font-size:13px;color:#c8deff">
         <div style="margin-bottom:12px;opacity:.75">
@@ -765,6 +784,7 @@
       $from.on('input', updateCount);
       $to.on('input',   updateCount);
 
+      // Preset buttons
       document.querySelectorAll('.fmt-range-preset').forEach(btn => {
         btn.addEventListener('click', () => {
           const preset = btn.getAttribute('data-preset');
@@ -789,8 +809,8 @@
           return;
         }
 
-        const fromIdx = fromNum - 1;
-        const toIdx   = toNum;
+        const fromIdx = fromNum - 1; // convert 1-based UI → 0-based array
+        const toIdx   = toNum;       // slice end is exclusive, so toNum is correct
 
         if (scanInProgress) { $status.css('color', '#ca3').text('⏳ Сканирование уже идёт…'); return; }
 
@@ -1081,9 +1101,15 @@
       </aside>
     `);
 
-    // ── SRT-style close handlers ──────────────────────────────────────────────
-    document.getElementById('fmt_close').addEventListener('click',  () => openDrawer(false), true);
-    document.getElementById('fmt_close2').addEventListener('click', () => openDrawer(false), true);
+    const _closeFn = e => { e.stopPropagation(); openDrawer(false); };
+    document.getElementById('fmt_close').addEventListener('click', _closeFn);
+    document.getElementById('fmt_close2').addEventListener('click', _closeFn);
+    document.getElementById('fmt_close').addEventListener('touchend',  e => { e.preventDefault(); _closeFn(e); }, { passive: false });
+    document.getElementById('fmt_close2').addEventListener('touchend', e => { e.preventDefault(); _closeFn(e); }, { passive: false });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && document.getElementById('fmt_drawer')?.classList.contains('fmt-open'))
+        openDrawer(false);
+    });
 
     $(document)
       .off('click.fmt_actions')
@@ -1148,26 +1174,20 @@
     });
   }
 
-  // ─── Open/close (ported from SRT) ────────────────────────────────────────────
+  // ─── Open/close ───────────────────────────────────────────────────────────────
 
   function openDrawer(open) {
-    ensureDrawer();
+    if (open) ensureDrawer();
     const drawer = document.getElementById('fmt_drawer');
     if (!drawer) return;
-
     if (open) {
-      // Create overlay the SRT way: insertBefore the drawer, handle both
-      // click AND touchstart so it closes on mobile tap-outside
       if (!document.getElementById('fmt_overlay')) {
         const ov = document.createElement('div');
         ov.id = 'fmt_overlay';
         document.body.insertBefore(ov, drawer);
-        ov.addEventListener('click',      () => openDrawer(false), true);
-        ov.addEventListener('touchstart', (e) => { e.preventDefault(); openDrawer(false); }, { passive: false, capture: true });
+        ov.addEventListener('click', () => openDrawer(false));
       }
       document.getElementById('fmt_overlay').style.display = 'block';
-
-      // SRT-style: add class that lifts the !important triple-hide in CSS
       drawer.classList.add('fmt-open');
       drawer.setAttribute('aria-hidden', 'false');
       renderDrawer();
@@ -1451,6 +1471,9 @@
   }
 
   // ─── Export ───────────────────────────────────────────────────────────────────
+  // BUG FIX (same as SRT): removed `await` before Popup.show.text() —
+  // the promise resolves when popup is CLOSED, so handlers must be attached
+  // via setTimeout(0) after the popup renders, not after await.
 
   async function exportJson() {
     const state    = await getChatState();
@@ -1460,6 +1483,7 @@
     const json     = JSON.stringify(state, null, 2);
     const total    = state.facts.length;
 
+    // ← NO await: promise resolves on popup close, not open
     ctx().Popup.show.text('📤 FMT — Экспорт фактов',
       `<div style="font-family:Consolas,monospace;font-size:12px">
         <div style="margin-bottom:10px;opacity:.8">
@@ -1479,6 +1503,7 @@
       </div>`
     );
 
+    // Give the browser one tick to render popup DOM before attaching handlers
     setTimeout(() => {
       document.getElementById('fmt_export_download')?.addEventListener('click', () => {
         downloadJson(filename, state);
@@ -1494,8 +1519,10 @@
   }
 
   // ─── Import ───────────────────────────────────────────────────────────────────
+  // Same fix: no await before Popup, handlers via setTimeout(0)
 
   async function importJson() {
+    // ← NO await
     ctx().Popup.show.text('📥 FMT — Импорт фактов',
       `<div style="font-family:Consolas,monospace;font-size:12px">
         <div style="margin-bottom:10px;font-weight:700;opacity:.9">Загрузить из файла или вставить JSON:</div>
@@ -1520,10 +1547,12 @@
     );
 
     setTimeout(() => {
+      // File picker button
       document.getElementById('fmt_import_file_btn')?.addEventListener('click', () => {
         document.getElementById('fmt_import_file_input')?.click();
       });
 
+      // Read selected file into textarea
       document.getElementById('fmt_import_file_input')?.addEventListener('change', (ev) => {
         const file = ev.target.files?.[0];
         if (!file) return;
@@ -1538,6 +1567,7 @@
         reader.readAsText(file);
       });
 
+      // Apply JSON from textarea
       document.getElementById('fmt_import_apply')?.addEventListener('click', async () => {
         const raw = document.getElementById('fmt_import_textarea')?.value?.trim();
         if (!raw) { toastr.warning('Вставьте JSON или выберите файл'); return; }
@@ -2059,12 +2089,6 @@ ${catMeta.icon} «${fact.text}»
   function wireChatEvents() {
     const { eventSource, event_types } = ctx();
 
-    // Escape key — SRT style, inside wireChatEvents
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && document.getElementById('fmt_drawer')?.classList.contains('fmt-open'))
-        openDrawer(false);
-    });
-
     eventSource.on(event_types.APP_READY, async () => {
       ensureFab(); applyFabPosition(); applyFabScale(); ensureDrawer();
       await mountSettingsUi();
@@ -2107,7 +2131,7 @@ ${catMeta.icon} «${fact.text}»
   // ─── Boot ─────────────────────────────────────────────────────────────────────
 
   jQuery(() => {
-    try { wireChatEvents(); console.log('[FMT] v1.3.5 loaded'); }
+    try { wireChatEvents(); console.log('[FMT] v1.3.4 loaded'); }
     catch (e) { console.error('[FMT] init failed', e); }
   });
 
