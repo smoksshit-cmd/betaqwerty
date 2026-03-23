@@ -1101,11 +1101,8 @@
       </aside>
     `);
 
-    const _closeFn = e => { e.stopPropagation(); openDrawer(false); };
-    document.getElementById('fmt_close').addEventListener('click', _closeFn);
-    document.getElementById('fmt_close2').addEventListener('click', _closeFn);
-    document.getElementById('fmt_close').addEventListener('touchend',  e => { e.preventDefault(); _closeFn(e); }, { passive: false });
-    document.getElementById('fmt_close2').addEventListener('touchend', e => { e.preventDefault(); _closeFn(e); }, { passive: false });
+    document.getElementById('fmt_close').addEventListener('click',  () => openDrawer(false), true);
+    document.getElementById('fmt_close2').addEventListener('click', () => openDrawer(false), true);
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && document.getElementById('fmt_drawer')?.classList.contains('fmt-open'))
         openDrawer(false);
@@ -1177,7 +1174,7 @@
   // ─── Open/close ───────────────────────────────────────────────────────────────
 
   function openDrawer(open) {
-    if (open) ensureDrawer();
+    ensureDrawer();
     const drawer = document.getElementById('fmt_drawer');
     if (!drawer) return;
     if (open) {
@@ -1185,7 +1182,7 @@
         const ov = document.createElement('div');
         ov.id = 'fmt_overlay';
         document.body.insertBefore(ov, drawer);
-        ov.addEventListener('click', () => openDrawer(false));
+        ov.addEventListener('click', () => openDrawer(false), true);
       }
       document.getElementById('fmt_overlay').style.display = 'block';
       drawer.classList.add('fmt-open');
