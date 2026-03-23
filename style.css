@@ -102,7 +102,6 @@
   #fmt_overlay {
     bottom: 80dvh;
     background: rgba(0,0,0,0.3);
-    pointer-events: none; /* не перехватывать тапы по drawer на мобиле */
   }
 }
 
@@ -135,10 +134,9 @@
 #fmt_drawer .footer button,
 #fmt_drawer header button {
   position: relative;
-  z-index: 10;
+  z-index: 1;
   pointer-events: auto !important;
   cursor: pointer;
-  touch-action: manipulation; /* быстрый отклик на тап без задержки 300ms */
 }
 
 #fmt_drawer.fmt-open {
