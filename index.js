@@ -3,13 +3,12 @@
  * v1.3.5
  *
  * Changes in v1.3.5:
- *  - openDrawer / ensureDrawer: ported SRT-style overlay + drawer logic:
- *      • overlay created via insertBefore (same z-stack order as SRT)
- *      • overlay closes drawer on both click AND touchstart (mobile fix)
- *      • drawer hidden via transform+visibility+pointer-events triple !important
- *        (overrides any ST theme that might show the panel)
- *      • srt-open → fmt-open class drives all three transitions
- *      • Escape key handler moved inside wireChatEvents (not top-level)
+ *  - Drawer open/close/overlay mechanism replaced with SRT-style:
+ *    • Overlay uses touchstart prevention + capture:true
+ *    • Drawer CSS uses visibility:hidden + pointer-events:none with !important
+ *    • Close buttons use native addEventListener with capture:true
+ *    • Escape handler attached at module level (not inside ensureDrawer)
+ *    • Class renamed from fmt-open to fmt-open (kept) but with SRT !important pattern
  */
 
 (() => {
@@ -1029,7 +1028,7 @@
     $('#fmt_fab').show();
   }
 
-  // ─── Drawer ───────────────────────────────────────────────────────────────────
+  // ─── Drawer (SRT-style open/close/overlay) ───────────────────────────────────
 
   function ensureDrawer() {
     if ($('#fmt_drawer').length) return;
@@ -1081,7 +1080,7 @@
       </aside>
     `);
 
-    // ── SRT-style close handlers ──────────────────────────────────────────────
+    // ── SRT-style: native addEventListener with capture:true on close buttons ──
     document.getElementById('fmt_close').addEventListener('click',  () => openDrawer(false), true);
     document.getElementById('fmt_close2').addEventListener('click', () => openDrawer(false), true);
 
@@ -1121,6 +1120,12 @@
     });
   }
 
+  // ── SRT-style: Escape handler at module level ──
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.getElementById('fmt_drawer')?.classList.contains('fmt-open'))
+      openDrawer(false);
+  });
+
   // ─── Filters & search ─────────────────────────────────────────────────────────
 
   function applyFiltersAndSearch() {
@@ -1148,7 +1153,7 @@
     });
   }
 
-  // ─── Open/close (ported from SRT) ────────────────────────────────────────────
+  // ─── Open/close (SRT-style) ───────────────────────────────────────────────────
 
   function openDrawer(open) {
     ensureDrawer();
@@ -1156,8 +1161,7 @@
     if (!drawer) return;
 
     if (open) {
-      // Create overlay the SRT way: insertBefore the drawer, handle both
-      // click AND touchstart so it closes on mobile tap-outside
+      // ── SRT-style overlay: touchstart prevention + capture:true ──
       if (!document.getElementById('fmt_overlay')) {
         const ov = document.createElement('div');
         ov.id = 'fmt_overlay';
@@ -1166,8 +1170,6 @@
         ov.addEventListener('touchstart', (e) => { e.preventDefault(); openDrawer(false); }, { passive: false, capture: true });
       }
       document.getElementById('fmt_overlay').style.display = 'block';
-
-      // SRT-style: add class that lifts the !important triple-hide in CSS
       drawer.classList.add('fmt-open');
       drawer.setAttribute('aria-hidden', 'false');
       renderDrawer();
@@ -2058,12 +2060,6 @@ ${catMeta.icon} «${fact.text}»
 
   function wireChatEvents() {
     const { eventSource, event_types } = ctx();
-
-    // Escape key — SRT style, inside wireChatEvents
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && document.getElementById('fmt_drawer')?.classList.contains('fmt-open'))
-        openDrawer(false);
-    });
 
     eventSource.on(event_types.APP_READY, async () => {
       ensureFab(); applyFabPosition(); applyFabScale(); ensureDrawer();
