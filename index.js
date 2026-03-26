@@ -2,560 +2,563 @@
  * Avatar Gallery — SillyTavern Extension
  * v1.0.0
  *
- * Adds a gallery of avatars for personas & characters.
- * - Upload multiple avatars per entity
- * - Click avatar in chat → zoom overlay with ◀ ▶ arrows
- * - Switch active avatar from the overlay
- * - Gallery management in extension settings
- *
- * Storage: extensionSettings (base64 thumbnails + full images)
+ * Allows uploading multiple avatar variants for characters and personas.
+ * Quick-switch from chat via arrow overlays on avatar zoom.
+ * Storage: base64 in extensionSettings (simple, no server API needed).
  */
 
 (() => {
   'use strict';
 
   const MODULE_KEY = 'avatar_gallery';
-  const MAX_IMG_SIZE = 512;       // max dimension for stored images
-  const THUMB_SIZE   = 80;        // thumbnail dimension
-  const MAX_FILE_MB  = 10;
+  const MAX_IMG_SIZE = 512; // resize to max 512px
+  const MAX_GALLERY  = 30;  // max images per entity
+  const JPEG_QUALITY = 0.85;
 
-  // ─── ST context ──────────────────────────────────────────────────
+  // ─── ST context ───────────────────────────────────────────────────────────────
 
   function ctx() { return SillyTavern.getContext(); }
 
-  function getGalleryData() {
+  function getStore() {
     const { extensionSettings } = ctx();
     if (!extensionSettings[MODULE_KEY])
-      extensionSettings[MODULE_KEY] = { galleries: {}, enabled: true };
+      extensionSettings[MODULE_KEY] = { galleries: {}, collapsed: false };
     return extensionSettings[MODULE_KEY];
   }
 
   function save() { ctx().saveSettingsDebounced(); }
 
-  // ─── Entity helpers ──────────────────────────────────────────────
+  // ─── Entity helpers ───────────────────────────────────────────────────────────
 
-  /**
-   * Returns an array of { id, name, avatar, type } for the current
-   * character + user persona visible in the chat.
-   */
-  function getActiveEntities() {
+  let currentMode = 'character'; // 'character' | 'persona'
+
+  function getCharacterInfo() {
     const c = ctx();
-    const entities = [];
-
-    // Character / bot
-    try {
-      if (c.characterId !== undefined && c.characters?.[c.characterId]) {
-        const char = c.characters[c.characterId];
-        entities.push({
-          id:     `char_${c.characterId}`,
-          name:   char.name || 'Character',
-          avatar: char.avatar,
-          type:   'character',
-        });
-      }
-    } catch {}
-
-    // Group members
-    try {
-      if (c.groupId !== undefined) {
-        const group = c.groups?.find?.(g => g.id === c.groupId);
-        if (group?.members) {
-          for (const memberId of group.members) {
-            const char = c.characters?.find?.(ch => ch.avatar?.includes?.(memberId) || ch.name === memberId);
-            if (char) {
-              entities.push({
-                id:     `char_${memberId}`,
-                name:   char.name || memberId,
-                avatar: char.avatar,
-                type:   'character',
-              });
-            }
-          }
-        }
-      }
-    } catch {}
-
-    // User persona
-    try {
-      const personaName = c.name1 || 'User';
-      const personaAvatar = c.user_avatar;
-      entities.push({
-        id:     `persona_${personaName.replace(/\W+/g, '_')}`,
-        name:   personaName,
-        avatar: personaAvatar,
-        type:   'persona',
-      });
-    } catch {}
-
-    return entities;
+    const charId = c.characterId;
+    if (charId === undefined || charId === null) return null;
+    const char = c.characters?.[charId];
+    if (!char) return null;
+    const avatar = char.avatar;
+    const avatarUrl = avatar
+      ? `/characters/${encodeURIComponent(avatar)}`
+      : '/img/ai4.png';
+    return {
+      id: `char_${char.avatar || charId}`,
+      name: char.name || 'Character',
+      avatarUrl,
+      avatar,
+      type: 'character',
+    };
   }
 
-  function getEntityGallery(entityId) {
-    const data = getGalleryData();
-    if (!data.galleries[entityId])
-      data.galleries[entityId] = { images: [], activeIndex: 0 };
-    return data.galleries[entityId];
+  function getPersonaInfo() {
+    const c = ctx();
+    // Try multiple ST API patterns for persona
+    const personaName = c.name1 || c.user?.name || 'User';
+    const personaAvatar = c.user_avatar;
+    const avatarUrl = personaAvatar
+      ? `/User Avatars/${encodeURIComponent(personaAvatar)}`
+      : '/img/user-default.png';
+    return {
+      id: `persona_${personaAvatar || personaName}`,
+      name: personaName,
+      avatarUrl,
+      avatar: personaAvatar,
+      type: 'persona',
+    };
   }
 
-  // ─── Image processing ────────────────────────────────────────────
+  function getCurrentEntity() {
+    return currentMode === 'character' ? getCharacterInfo() : getPersonaInfo();
+  }
 
-  function resizeImage(file, maxDim) {
+  function getGallery(entityId) {
+    const store = getStore();
+    if (!store.galleries[entityId]) store.galleries[entityId] = [];
+    return store.galleries[entityId];
+  }
+
+  // ─── Image processing ────────────────────────────────────────────────────────
+
+  function resizeImageToBase64(file) {
     return new Promise((resolve, reject) => {
-      if (file.size > MAX_FILE_MB * 1024 * 1024) {
-        reject(new Error(`Файл слишком большой (макс. ${MAX_FILE_MB}МБ)`));
-        return;
-      }
-
       const reader = new FileReader();
       reader.onload = (e) => {
         const img = new Image();
         img.onload = () => {
           let w = img.width, h = img.height;
-          if (w > maxDim || h > maxDim) {
-            const ratio = Math.min(maxDim / w, maxDim / h);
+          if (w > MAX_IMG_SIZE || h > MAX_IMG_SIZE) {
+            const ratio = Math.min(MAX_IMG_SIZE / w, MAX_IMG_SIZE / h);
             w = Math.round(w * ratio);
             h = Math.round(h * ratio);
           }
           const canvas = document.createElement('canvas');
-          canvas.width = w;
-          canvas.height = h;
-          const ctxC = canvas.getContext('2d');
-          ctxC.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL('image/webp', 0.85));
+          canvas.width = w; canvas.height = h;
+          const cctx = canvas.getContext('2d');
+          cctx.drawImage(img, 0, 0, w, h);
+          const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+          resolve(dataUrl);
         };
-        img.onerror = () => reject(new Error('Не удалось загрузить изображение'));
+        img.onerror = () => reject(new Error('Failed to load image'));
         img.src = e.target.result;
       };
-      reader.onerror = () => reject(new Error('Ошибка чтения файла'));
+      reader.onerror = () => reject(new Error('Failed to read file'));
       reader.readAsDataURL(file);
     });
   }
 
-  function makeThumb(base64, size) {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = size;
-        canvas.height = size;
-        const ctxC = canvas.getContext('2d');
-        // Crop to square from center
-        const min = Math.min(img.width, img.height);
-        const sx = (img.width - min) / 2;
-        const sy = (img.height - min) / 2;
-        ctxC.drawImage(img, sx, sy, min, min, 0, 0, size, size);
-        resolve(canvas.toDataURL('image/webp', 0.7));
-      };
-      img.src = base64;
-    });
-  }
+  // ─── Avatar setting via ST API ────────────────────────────────────────────────
 
-  // ─── Avatar application ──────────────────────────────────────────
+  async function setCharacterAvatar(base64DataUrl) {
+    const c = ctx();
+    const entity = getCharacterInfo();
+    if (!entity) return false;
 
-  /**
-   * Attempts to set the avatar for an entity using ST's internal
-   * methods. This is best-effort since ST doesn't expose a clean
-   * public API for programmatic avatar changes.
-   */
-  function applyAvatarToChat(entity, imageData) {
-    // Update avatars shown in the chat visually
-    // For characters: find their messages and update the img src
-    // For personas: update user avatar images
     try {
-      if (entity.type === 'character') {
-        // Update character avatar in chat messages
-        document.querySelectorAll(`.mes[ch_name="${CSS.escape(entity.name)}"] .avatar img`).forEach(img => {
-          img.src = imageData;
+      // Convert base64 to blob
+      const resp = await fetch(base64DataUrl);
+      const blob = await resp.blob();
+
+      const formData = new FormData();
+      formData.append('avatar', blob, 'avatar.jpg');
+      formData.append('overwrite_name', entity.name);
+
+      const result = await fetch('/api/characters/edit-attribute', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!result.ok) {
+        // Fallback: try the older editcharacterattribute endpoint
+        const formData2 = new FormData();
+        formData2.append('avatar', blob, 'avatar.jpg');
+        formData2.append('avatar_url', entity.avatar);
+
+        const result2 = await fetch('/editcharacterattribute', {
+          method: 'POST',
+          body: formData2,
         });
-        // Update the main avatar display if visible
-        const mainAvatar = document.querySelector('#avatar_img_gen');
-        if (mainAvatar) mainAvatar.src = imageData;
-      } else if (entity.type === 'persona') {
-        document.querySelectorAll('.mes[is_user="true"] .avatar img').forEach(img => {
-          img.src = imageData;
-        });
-        const userAvatar = document.querySelector('#user_avatar_block .avatar img');
-        if (userAvatar) userAvatar.src = imageData;
+
+        if (!result2.ok) {
+          console.warn('[AG] Both avatar update methods failed');
+          return false;
+        }
       }
+
+      // Force reload
+      if (typeof c.reloadCurrentChat === 'function') {
+        await c.reloadCurrentChat();
+      }
+
+      return true;
     } catch (e) {
-      console.warn('[AvatarGallery] Could not apply avatar visually:', e);
+      console.error('[AG] setCharacterAvatar failed', e);
+      return false;
     }
   }
 
-  // ─── Zoom overlay ────────────────────────────────────────────────
+  async function setPersonaAvatar(base64DataUrl) {
+    const c = ctx();
+    try {
+      const resp = await fetch(base64DataUrl);
+      const blob = await resp.blob();
 
-  let currentOverlayEntity = null;
-  let currentOverlayIndex  = 0;
+      const formData = new FormData();
+      formData.append('avatar', blob, 'avatar.jpg');
 
-  function showZoomOverlay(entityId) {
-    const data = getGalleryData();
-    if (!data.enabled) return;
+      // ST API for user avatar upload
+      const result = await fetch('/api/avatars/upload', {
+        method: 'POST',
+        body: formData,
+      });
 
-    const gallery = getEntityGallery(entityId);
-    const entities = getActiveEntities();
-    const entity = entities.find(e => e.id === entityId);
-    if (!entity) return;
+      if (!result.ok) {
+        // Older endpoint
+        const result2 = await fetch('/uploaduseravatar', {
+          method: 'POST',
+          body: formData,
+        });
+        if (!result2.ok) return false;
+      }
 
-    // Build image list: original avatar + gallery images
-    const images = [];
+      if (typeof c.reloadCurrentChat === 'function') {
+        await c.reloadCurrentChat();
+      }
 
-    // Add original ST avatar as first item
-    if (entity.avatar) {
-      // Try to get the actual avatar URL
-      const avatarUrl = entity.type === 'character'
-        ? `/characters/${encodeURIComponent(entity.avatar)}`
-        : `/User Avatars/${encodeURIComponent(entity.avatar)}`;
-      images.push({ src: avatarUrl, isOriginal: true, label: 'Основная' });
+      return true;
+    } catch (e) {
+      console.error('[AG] setPersonaAvatar failed', e);
+      return false;
+    }
+  }
+
+  async function setActiveAvatar(base64DataUrl, type) {
+    if (type === 'character') {
+      return await setCharacterAvatar(base64DataUrl);
+    } else {
+      return await setPersonaAvatar(base64DataUrl);
+    }
+  }
+
+  // ─── Upload handler ───────────────────────────────────────────────────────────
+
+  async function handleUpload(files) {
+    const entity = getCurrentEntity();
+    if (!entity) {
+      toastr.warning('[AG] Нет активного персонажа/персоны');
+      return;
     }
 
-    // Add gallery images
-    gallery.images.forEach((img, i) => {
-      images.push({ src: img.full, isOriginal: false, index: i, label: img.label || `#${i + 1}` });
-    });
+    const gallery = getGallery(entity.id);
 
-    if (!images.length) return;
-
-    currentOverlayEntity = entityId;
-    currentOverlayIndex  = Math.min(gallery.activeIndex || 0, images.length - 1);
-
-    removeZoomOverlay();
-
-    const overlay = document.createElement('div');
-    overlay.id = 'avg_zoom_overlay';
-    overlay.innerHTML = `
-      <div class="avg-zoom-backdrop"></div>
-      <div class="avg-zoom-container">
-        <div class="avg-zoom-header">
-          <span class="avg-zoom-name">${escHtml(entity.name)}</span>
-          <span class="avg-zoom-counter" id="avg_zoom_counter"></span>
-          <button class="avg-zoom-close" title="Закрыть">✕</button>
-        </div>
-        <div class="avg-zoom-body">
-          <button class="avg-zoom-arrow avg-zoom-prev" title="Назад">‹</button>
-          <div class="avg-zoom-img-wrap">
-            <img id="avg_zoom_img" class="avg-zoom-img" src="" alt="Avatar">
-            <div class="avg-zoom-label" id="avg_zoom_label"></div>
-          </div>
-          <button class="avg-zoom-arrow avg-zoom-next" title="Вперёд">›</button>
-        </div>
-        <div class="avg-zoom-thumbs" id="avg_zoom_thumbs"></div>
-        <div class="avg-zoom-actions">
-          <button class="avg-zoom-btn avg-zoom-set" id="avg_zoom_set" title="Установить как активный аватар">★ Установить</button>
-        </div>
-      </div>
-    `;
-
-    document.body.appendChild(overlay);
-
-    const updateDisplay = () => {
-      const img = images[currentOverlayIndex];
-      document.getElementById('avg_zoom_img').src = img.src;
-      document.getElementById('avg_zoom_counter').textContent = `${currentOverlayIndex + 1} / ${images.length}`;
-      document.getElementById('avg_zoom_label').textContent = img.label;
-
-      // Update thumbs active state
-      document.querySelectorAll('.avg-zoom-thumb').forEach((el, i) => {
-        el.classList.toggle('active', i === currentOverlayIndex);
-      });
-
-      // Hide set button for original avatar
-      const setBtn = document.getElementById('avg_zoom_set');
-      if (img.isOriginal) {
-        setBtn.style.display = 'none';
-      } else {
-        setBtn.style.display = '';
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) continue;
+      if (gallery.length >= MAX_GALLERY) {
+        toastr.warning(`[AG] Максимум ${MAX_GALLERY} аватарок`);
+        break;
       }
 
-      // Hide arrows if only 1 image
-      overlay.querySelectorAll('.avg-zoom-arrow').forEach(a => {
-        a.style.visibility = images.length <= 1 ? 'hidden' : 'visible';
-      });
-    };
-
-    // Build thumbnails strip
-    const thumbsContainer = document.getElementById('avg_zoom_thumbs');
-    images.forEach((img, i) => {
-      const thumb = document.createElement('div');
-      thumb.className = `avg-zoom-thumb${i === currentOverlayIndex ? ' active' : ''}`;
-      thumb.style.backgroundImage = `url(${img.src})`;
-      thumb.title = img.label;
-      thumb.addEventListener('click', () => {
-        currentOverlayIndex = i;
-        updateDisplay();
-      });
-      thumbsContainer.appendChild(thumb);
-    });
-
-    updateDisplay();
-
-    // Event handlers
-    overlay.querySelector('.avg-zoom-backdrop').addEventListener('click', removeZoomOverlay);
-    overlay.querySelector('.avg-zoom-close').addEventListener('click', removeZoomOverlay);
-
-    overlay.querySelector('.avg-zoom-prev').addEventListener('click', () => {
-      currentOverlayIndex = (currentOverlayIndex - 1 + images.length) % images.length;
-      updateDisplay();
-    });
-
-    overlay.querySelector('.avg-zoom-next').addEventListener('click', () => {
-      currentOverlayIndex = (currentOverlayIndex + 1) % images.length;
-      updateDisplay();
-    });
-
-    document.getElementById('avg_zoom_set').addEventListener('click', () => {
-      const img = images[currentOverlayIndex];
-      if (!img.isOriginal) {
-        gallery.activeIndex = currentOverlayIndex;
-        applyAvatarToChat(entity, img.src);
-        save();
-        toastr.success(`Аватар "${img.label}" установлен для ${entity.name}`);
+      try {
+        const base64 = await resizeImageToBase64(file);
+        gallery.push({
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+          data: base64,
+          ts: Date.now(),
+        });
+      } catch (e) {
+        console.error('[AG] upload error', e);
+        toastr.error(`[AG] Ошибка: ${file.name}`);
       }
-    });
+    }
 
-    // Keyboard navigation
-    const onKey = (e) => {
-      if (e.key === 'Escape') { removeZoomOverlay(); return; }
-      if (e.key === 'ArrowLeft') {
-        currentOverlayIndex = (currentOverlayIndex - 1 + images.length) % images.length;
-        updateDisplay();
-      }
-      if (e.key === 'ArrowRight') {
-        currentOverlayIndex = (currentOverlayIndex + 1) % images.length;
-        updateDisplay();
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    overlay._keyHandler = onKey;
+    save();
+    renderGallery();
+    toastr.success(`[AG] Загружено аватарок: ${files.length}`);
   }
 
-  function removeZoomOverlay() {
-    const overlay = document.getElementById('avg_zoom_overlay');
-    if (!overlay) return;
-    if (overlay._keyHandler) document.removeEventListener('keydown', overlay._keyHandler);
-    overlay.remove();
-    currentOverlayEntity = null;
+  function deleteImage(entityId, imgId) {
+    const gallery = getGallery(entityId);
+    const idx = gallery.findIndex(g => g.id === imgId);
+    if (idx >= 0) gallery.splice(idx, 1);
+    save();
+    renderGallery();
   }
 
-  // ─── Chat avatar click interception ──────────────────────────────
+  // ─── Zoom overlay ────────────────────────────────────────────────────────────
 
-  function setupAvatarClickHandlers() {
-    // Intercept clicks on avatar images in chat
-    $(document).off('click.avg_avatar').on('click.avg_avatar', '.mes .avatar img', function (e) {
-      const data = getGalleryData();
-      if (!data.enabled) return;
+  let zoomState = { entityId: null, type: null, images: [], currentIdx: 0 };
 
-      const mesEl = $(this).closest('.mes');
-      if (!mesEl.length) return;
+  function ensureZoomOverlay() {
+    if (document.getElementById('ag_zoom_overlay')) return;
+    const el = document.createElement('div');
+    el.id = 'ag_zoom_overlay';
+    el.innerHTML = `
+      <div class="ag-zoom-container">
+        <button class="ag-zoom-close" title="Закрыть">✕</button>
+        <button class="ag-zoom-nav ag-zoom-prev" title="Предыдущая">◀</button>
+        <img class="ag-zoom-img" src="" alt="avatar">
+        <button class="ag-zoom-nav ag-zoom-next" title="Следующая">▶</button>
+        <span class="ag-zoom-counter"></span>
+        <button class="ag-zoom-set-btn">✓ Установить</button>
+      </div>`;
+    document.body.appendChild(el);
 
-      const entities = getActiveEntities();
-      let entity = null;
+    el.querySelector('.ag-zoom-close').addEventListener('click', closeZoom);
+    el.querySelector('.ag-zoom-prev').addEventListener('click', () => navigateZoom(-1));
+    el.querySelector('.ag-zoom-next').addEventListener('click', () => navigateZoom(1));
+    el.querySelector('.ag-zoom-set-btn').addEventListener('click', () => applyZoomAvatar());
 
-      const isUser = mesEl.attr('is_user') === 'true';
-      if (isUser) {
-        entity = entities.find(e => e.type === 'persona');
-      } else {
-        const charName = mesEl.attr('ch_name');
-        entity = entities.find(e => e.type === 'character' && e.name === charName);
-      }
+    el.addEventListener('click', (e) => {
+      if (e.target === el) closeZoom();
+    });
 
+    document.addEventListener('keydown', (e) => {
+      if (!document.getElementById('ag_zoom_overlay')?.classList.contains('ag-visible')) return;
+      if (e.key === 'Escape') closeZoom();
+      if (e.key === 'ArrowLeft') navigateZoom(-1);
+      if (e.key === 'ArrowRight') navigateZoom(1);
+      if (e.key === 'Enter') applyZoomAvatar();
+    });
+  }
+
+  function openZoom(entityId, type, images, startIdx = 0) {
+    ensureZoomOverlay();
+    zoomState = { entityId, type, images: [...images], currentIdx: startIdx };
+    updateZoomDisplay();
+    document.getElementById('ag_zoom_overlay').classList.add('ag-visible');
+  }
+
+  function closeZoom() {
+    document.getElementById('ag_zoom_overlay')?.classList.remove('ag-visible');
+  }
+
+  function navigateZoom(dir) {
+    if (!zoomState.images.length) return;
+    zoomState.currentIdx = (zoomState.currentIdx + dir + zoomState.images.length) % zoomState.images.length;
+    updateZoomDisplay();
+  }
+
+  function updateZoomDisplay() {
+    const overlay = document.getElementById('ag_zoom_overlay');
+    if (!overlay || !zoomState.images.length) return;
+    const img = zoomState.images[zoomState.currentIdx];
+    overlay.querySelector('.ag-zoom-img').src = img.data || img.url || '';
+    overlay.querySelector('.ag-zoom-counter').textContent =
+      `${zoomState.currentIdx + 1} / ${zoomState.images.length}`;
+
+    // Hide nav if only 1 image
+    const showNav = zoomState.images.length > 1;
+    overlay.querySelector('.ag-zoom-prev').style.display = showNav ? '' : 'none';
+    overlay.querySelector('.ag-zoom-next').style.display = showNav ? '' : 'none';
+  }
+
+  async function applyZoomAvatar() {
+    if (!zoomState.images.length) return;
+    const img = zoomState.images[zoomState.currentIdx];
+    const data = img.data || img.url;
+    if (!data) return;
+
+    toastr.info('[AG] Устанавливаю аватар…');
+
+    const ok = await setActiveAvatar(data, zoomState.type);
+    if (ok) {
+      toastr.success('[AG] Аватар обновлён!');
+      closeZoom();
+    } else {
+      toastr.warning(
+        '[AG] Автоматическая смена не удалась. Скачайте картинку и установите вручную.',
+        '', { timeOut: 5000 }
+      );
+    }
+  }
+
+  // ─── Chat avatar arrows ──────────────────────────────────────────────────────
+
+  function injectChatArrows() {
+    // Find message avatars in chat and add navigation arrows
+    document.querySelectorAll('.mes .avatar img, .mes .mes_img_container img').forEach(img => {
+      const mes = img.closest('.mes');
+      if (!mes || mes.querySelector('.ag-chat-zoom-arrows')) return;
+
+      const isUser = mes.getAttribute('is_user') === 'true' || mes.classList.contains('mes_user');
+      const entity = isUser ? getPersonaInfo() : getCharacterInfo();
       if (!entity) return;
 
-      const gallery = getEntityGallery(entity.id);
-      // Only show overlay if there are gallery images
-      if (gallery.images.length > 0) {
-        e.preventDefault();
+      const gallery = getGallery(entity.id);
+      if (!gallery.length) return;
+
+      const container = img.closest('.avatar') || img.closest('.mes_img_container') || img.parentElement;
+      if (!container) return;
+      container.style.position = 'relative';
+
+      const arrows = document.createElement('div');
+      arrows.className = 'ag-chat-zoom-arrows';
+      arrows.innerHTML = `
+        <button class="ag-chat-arrow ag-chat-prev" title="Предыдущая">◀</button>
+        <button class="ag-chat-arrow ag-chat-next" title="Следующая">▶</button>`;
+      container.appendChild(arrows);
+
+      // Build image list: current avatar + gallery
+      const buildImageList = () => {
+        const ent = isUser ? getPersonaInfo() : getCharacterInfo();
+        if (!ent) return [];
+        const gal = getGallery(ent.id);
+        const list = [{ url: ent.avatarUrl, data: null, id: '__current__' }];
+        gal.forEach(g => list.push(g));
+        return list;
+      };
+
+      arrows.querySelector('.ag-chat-prev').addEventListener('click', (e) => {
         e.stopPropagation();
-        e.stopImmediatePropagation();
-        showZoomOverlay(entity.id);
-      }
+        e.preventDefault();
+        const images = buildImageList();
+        if (images.length <= 1) return;
+        openZoom(entity.id, entity.type, images, images.length - 1);
+      });
+
+      arrows.querySelector('.ag-chat-next').addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const images = buildImageList();
+        if (images.length <= 1) return;
+        openZoom(entity.id, entity.type, images, 1);
+      });
     });
   }
 
-  // ─── Settings panel ──────────────────────────────────────────────
+  // ─── Settings UI ──────────────────────────────────────────────────────────────
+
+  function renderGallery() {
+    const $gallery = $('#ag_gallery_grid');
+    const $info    = $('#ag_current_info');
+    if (!$gallery.length) return;
+
+    const entity = getCurrentEntity();
+    if (!entity) {
+      $info.html('<div class="ag-current-name" style="opacity:.5">Откройте чат с персонажем</div>');
+      $gallery.html('<div class="ag-empty">Нет активного чата</div>');
+      return;
+    }
+
+    const gallery = getGallery(entity.id);
+
+    $info.html(`
+      <img class="ag-current-avatar" src="${entity.avatarUrl}" alt="" onerror="this.src='/img/ai4.png'">
+      <span class="ag-current-name">${escHtml(entity.name)}</span>
+      <span class="ag-current-count">${gallery.length} шт.</span>
+    `);
+
+    if (!gallery.length) {
+      $gallery.html('<div class="ag-empty">Нет загруженных аватарок.<br>Нажмите «+ Загрузить» чтобы добавить.</div>');
+      return;
+    }
+
+    let html = '';
+    gallery.forEach((img, idx) => {
+      html += `
+        <div class="ag-thumb-wrap" data-entity="${entity.id}" data-img-id="${img.id}" data-idx="${idx}">
+          <img class="ag-thumb-img" src="${img.data}" alt="" loading="lazy">
+          <button class="ag-thumb-del" data-entity="${entity.id}" data-img-id="${img.id}" title="Удалить">✕</button>
+        </div>`;
+    });
+    $gallery.html(html);
+  }
+
+  function escHtml(s) {
+    return String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+  }
 
   async function mountSettingsUi() {
-    if ($('#avg_settings_block').length) return;
+    if ($('#ag_settings_block').length) return;
     const target = $('#extensions_settings2').length ? '#extensions_settings2' : '#extensions_settings';
     if (!$(target).length) return;
 
-    const data = getGalleryData();
+    const store = getStore();
 
     $(target).append(`
-      <div class="avg-settings-block" id="avg_settings_block">
-        <div class="avg-settings-title">
+      <div class="ag-settings-block" id="ag_settings_block">
+        <div class="ag-settings-title">
           <span>🖼️ Avatar Gallery</span>
-          <button type="button" id="avg_collapse_btn">▾</button>
+          <button type="button" id="ag_collapse_btn">${store.collapsed ? '▸' : '▾'}</button>
         </div>
-        <div class="avg-settings-body" id="avg_settings_body">
-          <div class="avg-setting-row">
-            <label class="avg-ck">
-              <input type="checkbox" id="avg_enabled" ${data.enabled !== false ? 'checked' : ''}>
-              <span>Включено</span>
-            </label>
+        <div class="ag-settings-body" id="ag_settings_body" ${store.collapsed ? 'style="display:none"' : ''}>
+          <div class="ag-target-bar">
+            <button class="ag-target-btn ${currentMode === 'character' ? 'active' : ''}" data-mode="character">🤖 Персонаж</button>
+            <button class="ag-target-btn ${currentMode === 'persona' ? 'active' : ''}" data-mode="persona">👤 Персона</button>
           </div>
-          <div class="avg-hint">Нажмите на аватар в чате чтобы открыть галерею. Стрелки ◀ ▶ для переключения.</div>
-          <div class="avg-divider"></div>
-          <div class="avg-entity-list" id="avg_entity_list">
-            <div class="avg-hint">Откройте чат чтобы увидеть персонажей</div>
+          <div class="ag-current-info" id="ag_current_info"></div>
+          <div class="ag-gallery" id="ag_gallery_grid"></div>
+          <div class="ag-upload-area">
+            <button class="ag-upload-btn" id="ag_upload_btn">+ Загрузить</button>
+            <input type="file" id="ag_file_input" accept="image/*" multiple style="display:none">
+            <span class="ag-hint">JPG, PNG, WebP · до ${MAX_GALLERY} шт.</span>
           </div>
         </div>
       </div>
     `);
 
-    $('#avg_collapse_btn').on('click', function () {
-      const body = $('#avg_settings_body');
-      const open = body.is(':visible');
-      body.toggle(!open);
-      $(this).text(open ? '▸' : '▾');
-    });
-
-    $('#avg_enabled').on('change', function () {
-      getGalleryData().enabled = $(this).prop('checked');
+    // Collapse toggle
+    $('#ag_collapse_btn').on('click', () => {
+      store.collapsed = !store.collapsed;
+      $('#ag_settings_body').toggle(!store.collapsed);
+      $('#ag_collapse_btn').text(store.collapsed ? '▸' : '▾');
       save();
     });
 
-    refreshEntityList();
-  }
-
-  function refreshEntityList() {
-    const $list = $('#avg_entity_list');
-    if (!$list.length) return;
-
-    const entities = getActiveEntities();
-    if (!entities.length) {
-      $list.html('<div class="avg-hint">Откройте чат чтобы увидеть персонажей</div>');
-      return;
-    }
-
-    let html = '';
-    for (const entity of entities) {
-      const gallery = getEntityGallery(entity.id);
-      const count = gallery.images.length;
-      const typeLabel = entity.type === 'persona' ? '👤' : '🤖';
-
-      html += `
-        <div class="avg-entity-card" data-entity-id="${escHtml(entity.id)}">
-          <div class="avg-entity-header">
-            <span class="avg-entity-icon">${typeLabel}</span>
-            <span class="avg-entity-name">${escHtml(entity.name)}</span>
-            <span class="avg-entity-count">${count} аватар${count === 1 ? '' : count > 1 && count < 5 ? 'а' : 'ов'}</span>
-          </div>
-          <div class="avg-entity-thumbs" id="avg_thumbs_${escHtml(entity.id)}">
-            ${gallery.images.map((img, i) => `
-              <div class="avg-thumb" data-index="${i}" title="${escHtml(img.label || `#${i+1}`)}">
-                <img src="${img.thumb}" alt="">
-                <button class="avg-thumb-del" data-entity="${escHtml(entity.id)}" data-index="${i}" title="Удалить">✕</button>
-              </div>
-            `).join('')}
-            <label class="avg-thumb avg-thumb-add" title="Добавить аватар">
-              <span>+</span>
-              <input type="file" accept="image/*" multiple class="avg-file-input" data-entity="${escHtml(entity.id)}" style="display:none">
-            </label>
-          </div>
-        </div>
-      `;
-    }
-
-    $list.html(html);
-
-    // File upload handlers
-    $list.find('.avg-file-input').off('change').on('change', async function () {
-      const entityId = $(this).data('entity');
-      const files = this.files;
-      if (!files?.length) return;
-
-      for (const file of files) {
-        try {
-          const full  = await resizeImage(file, MAX_IMG_SIZE);
-          const thumb = await makeThumb(full, THUMB_SIZE);
-          const gallery = getEntityGallery(entityId);
-          gallery.images.push({
-            full,
-            thumb,
-            label: file.name.replace(/\.[^.]+$/, '').slice(0, 30),
-            ts: Date.now(),
-          });
-          save();
-          toastr.success(`Аватар добавлен: ${file.name}`);
-        } catch (e) {
-          toastr.error(`Ошибка: ${e.message}`);
-        }
-      }
-
-      refreshEntityList();
+    // Mode switch
+    $(document).off('click.ag_mode').on('click.ag_mode', '.ag-target-btn', function () {
+      currentMode = this.getAttribute('data-mode');
+      document.querySelectorAll('.ag-target-btn').forEach(b => b.classList.remove('active'));
+      this.classList.add('active');
+      renderGallery();
     });
 
-    // Delete handlers
-    $list.find('.avg-thumb-del').off('click').on('click', function (e) {
+    // Upload
+    $('#ag_upload_btn').on('click', () => document.getElementById('ag_file_input')?.click());
+    $('#ag_file_input').on('change', async (e) => {
+      const files = e.target.files;
+      if (files?.length) await handleUpload(Array.from(files));
+      e.target.value = '';
+    });
+
+    // Thumbnail click → open zoom
+    $(document).off('click.ag_thumb').on('click.ag_thumb', '.ag-thumb-wrap', function (e) {
+      if (e.target.classList.contains('ag-thumb-del')) return;
+      const entityId = this.getAttribute('data-entity');
+      const idx = parseInt(this.getAttribute('data-idx')) || 0;
+      const entity = getCurrentEntity();
+      if (!entity) return;
+
+      const gallery = getGallery(entityId);
+      // Current avatar + gallery items
+      const images = [{ url: entity.avatarUrl, data: null, id: '__current__' }];
+      gallery.forEach(g => images.push(g));
+
+      openZoom(entityId, entity.type, images, idx + 1); // +1 because current is at 0
+    });
+
+    // Delete thumbnail
+    $(document).off('click.ag_del').on('click.ag_del', '.ag-thumb-del', function (e) {
       e.stopPropagation();
-      const entityId = $(this).data('entity');
-      const index    = $(this).data('index');
-      const gallery  = getEntityGallery(entityId);
-      gallery.images.splice(index, 1);
-      if (gallery.activeIndex >= gallery.images.length) {
-        gallery.activeIndex = Math.max(0, gallery.images.length - 1);
-      }
-      save();
-      refreshEntityList();
-      toastr.info('Аватар удалён');
+      const entityId = this.getAttribute('data-entity');
+      const imgId = this.getAttribute('data-img-id');
+      deleteImage(entityId, imgId);
     });
 
-    // Click thumb → open zoom
-    $list.find('.avg-thumb:not(.avg-thumb-add)').off('click').on('click', function () {
-      const entityId = $(this).closest('.avg-entity-card').data('entity-id');
-      const index = $(this).data('index');
-      const gallery = getEntityGallery(entityId);
-      if (gallery.images.length > 0) {
-        currentOverlayIndex = index + 1; // +1 because index 0 is original avatar
-        showZoomOverlay(entityId);
-      }
-    });
+    renderGallery();
   }
 
-  // ─── Utils ───────────────────────────────────────────────────────
-
-  function escHtml(s) {
-    return String(s)
-      .replaceAll('&', '&amp;').replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
-  }
-
-  // ─── Events ──────────────────────────────────────────────────────
+  // ─── Events ───────────────────────────────────────────────────────────────────
 
   function wireEvents() {
     const { eventSource, event_types } = ctx();
 
     eventSource.on(event_types.APP_READY, async () => {
       await mountSettingsUi();
-      setupAvatarClickHandlers();
+      ensureZoomOverlay();
+      setTimeout(injectChatArrows, 500);
     });
 
-    eventSource.on(event_types.CHAT_CHANGED, () => {
-      refreshEntityList();
-      // Re-apply gallery avatar if one was set
-      setTimeout(() => {
-        const entities = getActiveEntities();
-        for (const entity of entities) {
-          const gallery = getEntityGallery(entity.id);
-          if (gallery.images.length > 0 && gallery.activeIndex > 0) {
-            const imgIdx = gallery.activeIndex - 1; // -1 because 0 is original
-            if (gallery.images[imgIdx]) {
-              applyAvatarToChat(entity, gallery.images[imgIdx].full);
-            }
-          }
-        }
-      }, 500);
+    eventSource.on(event_types.CHAT_CHANGED, async () => {
+      await new Promise(r => setTimeout(r, 300));
+      renderGallery();
+      setTimeout(injectChatArrows, 500);
     });
+
+    eventSource.on(event_types.MESSAGE_RECEIVED, () => {
+      setTimeout(injectChatArrows, 300);
+    });
+
+    eventSource.on(event_types.MESSAGE_SENT, () => {
+      setTimeout(injectChatArrows, 300);
+    });
+
+    // Also observe DOM for dynamically added messages
+    const chatObserver = new MutationObserver(() => {
+      setTimeout(injectChatArrows, 200);
+    });
+
+    const startObserving = () => {
+      const chatContainer = document.getElementById('chat');
+      if (chatContainer) {
+        chatObserver.observe(chatContainer, { childList: true, subtree: false });
+      }
+    };
+
+    // Try to start observing after a delay
+    setTimeout(startObserving, 1000);
+    eventSource.on(event_types.CHAT_CHANGED, () => setTimeout(startObserving, 500));
   }
 
-  // ─── Boot ────────────────────────────────────────────────────────
+  // ─── Boot ─────────────────────────────────────────────────────────────────────
 
   jQuery(() => {
     try {
       wireEvents();
-      console.log('[AvatarGallery] v1.0.0 loaded');
+      console.log('[AG] Avatar Gallery v1.0.0 loaded');
     } catch (e) {
-      console.error('[AvatarGallery] init failed', e);
+      console.error('[AG] init failed', e);
     }
   });
 
