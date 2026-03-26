@@ -1,15 +1,11 @@
 {
-  "display_name": "Трекер памяти фактов",
-  "loading_order": 56,
-  "js": [
-    "index.js"
-  ],
-  "css": [
-    "style.css"
-  ],
+  "display_name": "Avatar Gallery",
+  "loading_order": 50,
+  "js": ["index.js"],
+  "css": ["style.css"],
   "author": "Smokshi",
-  "version": "2.1.0",
+  "version": "1.0.0",
   "auto_update": true,
-  "homepage": "https://github.com/smoksshit-cmd/SillyTavern-FactsMemoryTracker",
+  "homepage": "https://github.com/smoksshit-cmd/SillyTavern-AvatarGallery",
   "requires": []
 }
