@@ -25,246 +25,82 @@ const getStrategy = (entry)=>{
     }
 };
 
+// === TOKEN ESTIMATION ===
+// ~4 chars/token for Latin, ~1.5 chars/token for Cyrillic/CJK
+function estimateTokens(text) {
+    if (!text) return 0;
+    let tokens = 0;
+    for (const char of text) {
+        const code = char.codePointAt(0);
+        if (
+            (code >= 0x0400 && code <= 0x04FF) || // Cyrillic
+            (code >= 0x4E00 && code <= 0x9FFF) || // CJK
+            (code >= 0x3000 && code <= 0x303F) || // CJK punctuation
+            (code >= 0x0600 && code <= 0x06FF)    // Arabic
+        ) {
+            tokens += 0.65;
+        } else {
+            tokens += 0.25;
+        }
+    }
+    return Math.ceil(tokens);
+}
+
+function entryTokens(entry) {
+    return estimateTokens(entry.content ?? '');
+}
+
+// === DISABLED ENTRIES ===
+function getDisabledKey() {
+    return `stwii--disabled--${chat_metadata?.chat_id ?? 'global'}`;
+}
+
+function getDisabledSet() {
+    try {
+        const raw = localStorage.getItem(getDisabledKey());
+        return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch { return new Set(); }
+}
+
+function saveDisabledSet(set) {
+    localStorage.setItem(getDisabledKey(), JSON.stringify([...set]));
+}
+
+function entryKey(entry) {
+    return `${entry.world}§§§${entry.uid}`;
+}
+
+async function toggleEntryDisabled(entry) {
+    const key = entryKey(entry);
+    const disabled = getDisabledSet();
+    const nowDisabled = !disabled.has(key);
+    if (nowDisabled) {
+        disabled.add(key);
+    } else {
+        disabled.delete(key);
+    }
+    saveDisabledSet(disabled);
+
+    // Try to toggle in ST via slash command
+    try {
+        await SlashCommandParser.commands['wi-set-entry-field']?.callback(
+            {
+                file: entry.world,
+                field: 'disable',
+                _scope: null,
+                _abortController: null,
+            },
+            `${entry.uid}|||${nowDisabled ? 'true' : 'false'}`,
+        );
+    } catch(e) {
+        console.warn('[STWII] Could not toggle entry via slash cmd:', e);
+    }
+
+    return nowDisabled;
+}
+
 let generationType;
 eventSource.on(event_types.GENERATION_STARTED, (genType)=>generationType = genType);
-
-// === KEYWORD HIGHLIGHT TOOLTIP ===
-let activeTooltip = null;
-
-function createTooltip(entry, anchorEl) {
-    removeTooltip();
-
-    const tip = document.createElement('div');
-    tip.classList.add('stwii--keyword-tooltip');
-
-    const header = document.createElement('div');
-    header.classList.add('stwii--kt-header');
-    const icon = document.createElement('span');
-    icon.textContent = strategy[getStrategy(entry)] ?? '📖';
-    header.append(icon);
-    const name = document.createElement('span');
-    name.classList.add('stwii--kt-name');
-    name.textContent = entry.comment?.length ? entry.comment : entry.key.join(', ');
-    header.append(name);
-    const world = document.createElement('span');
-    world.classList.add('stwii--kt-world');
-    world.textContent = `[${entry.world}]`;
-    header.append(world);
-    tip.append(header);
-
-    if (entry.content?.length) {
-        const body = document.createElement('div');
-        body.classList.add('stwii--kt-body');
-        body.textContent = entry.content;
-        tip.append(body);
-    }
-
-    document.body.append(tip);
-    activeTooltip = tip;
-
-    // Position tooltip
-    const rect = anchorEl.getBoundingClientRect();
-    const tipWidth = Math.min(320, window.innerWidth - 20);
-    tip.style.maxWidth = tipWidth + 'px';
-
-    // Measure
-    tip.style.visibility = 'hidden';
-    tip.style.display = 'block';
-    const tipHeight = tip.offsetHeight;
-    tip.style.visibility = '';
-    tip.style.display = '';
-
-    let left = rect.left;
-    let top = rect.bottom + 6;
-
-    if (left + tipWidth > window.innerWidth - 10) {
-        left = window.innerWidth - tipWidth - 10;
-    }
-    if (left < 10) left = 10;
-
-    if (top + tipHeight > window.innerHeight - 10) {
-        top = rect.top - tipHeight - 6;
-    }
-    if (top < 10) top = 10;
-
-    tip.style.left = left + 'px';
-    tip.style.top = top + 'px';
-
-    // Animate in
-    requestAnimationFrame(()=>tip.classList.add('stwii--kt-visible'));
-
-    return tip;
-}
-
-function removeTooltip() {
-    if (activeTooltip) {
-        activeTooltip.remove();
-        activeTooltip = null;
-    }
-}
-
-document.addEventListener('click', (e)=>{
-    if (!e.target.closest('.stwii--keyword') && !e.target.closest('.stwii--keyword-tooltip')) {
-        removeTooltip();
-    }
-}, true);
-
-// === KEYWORD HIGHLIGHTING IN CHAT ===
-
-/**
- * Build a map: lowercased keyword string -> WI entry
- * (multiple keys per entry)
- */
-function buildKeywordMap(entryList) {
-    /** @type {Map<string, object>} */
-    const map = new Map();
-    for (const entry of entryList) {
-        if (!entry.key?.length) continue;
-        for (const k of entry.key) {
-            const kl = k.trim().toLowerCase();
-            if (kl.length >= 2) {
-                map.set(kl, entry);
-            }
-        }
-    }
-    return map;
-}
-
-/**
- * Walk text nodes in an element and wrap keyword matches with <span class="stwii--keyword">
- */
-function highlightKeywordsInElement(el, keywordMap) {
-    if (!keywordMap.size) return;
-
-    // Build a regex from all keywords, longest first to avoid partial matches
-    const keywords = [...keywordMap.keys()].sort((a, b) => b.length - a.length);
-    // Escape special regex chars
-    const escaped = keywords.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    const pattern = new RegExp(`\\b(${escaped.join('|')})\\b`, 'gi');
-
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
-        acceptNode(node) {
-            // Skip nodes inside already-highlighted spans or stwii elements
-            let p = node.parentElement;
-            while (p && p !== el) {
-                if (p.classList?.contains('stwii--keyword')) return NodeFilter.FILTER_REJECT;
-                if (p.classList?.contains('stwii--keyword-tooltip')) return NodeFilter.FILTER_REJECT;
-                p = p.parentElement;
-            }
-            return NodeFilter.FILTER_ACCEPT;
-        }
-    });
-
-    const textNodes = [];
-    let node;
-    while ((node = walker.nextNode())) {
-        textNodes.push(node);
-    }
-
-    for (const textNode of textNodes) {
-        const text = textNode.textContent;
-        if (!pattern.test(text)) continue;
-        pattern.lastIndex = 0;
-
-        const frag = document.createDocumentFragment();
-        let last = 0;
-        let match;
-        while ((match = pattern.exec(text)) !== null) {
-            if (match.index > last) {
-                frag.appendChild(document.createTextNode(text.slice(last, match.index)));
-            }
-            const matchedKey = match[0].toLowerCase();
-            const entry = keywordMap.get(matchedKey);
-
-            const span = document.createElement('span');
-            span.classList.add('stwii--keyword');
-            if (entry) {
-                span.dataset.stwiiStrat = getStrategy(entry);
-                span.addEventListener('click', (e)=>{
-                    e.stopPropagation();
-                    if (activeTooltip && activeTooltip._anchorEl === span) {
-                        removeTooltip();
-                        return;
-                    }
-                    const tip = createTooltip(entry, span);
-                    tip._anchorEl = span;
-                });
-            }
-            span.textContent = match[0];
-            frag.appendChild(span);
-            last = match.index + match[0].length;
-        }
-        if (last < text.length) {
-            frag.appendChild(document.createTextNode(text.slice(last)));
-        }
-        textNode.parentNode.replaceChild(frag, textNode);
-    }
-}
-
-/**
- * Remove existing keyword highlights from an element (restore plain text)
- */
-function removeKeywordHighlights(el) {
-    const spans = el.querySelectorAll('.stwii--keyword');
-    for (const span of spans) {
-        span.replaceWith(document.createTextNode(span.textContent));
-    }
-    // Normalize adjacent text nodes
-    el.normalize();
-}
-
-/**
- * Apply highlights to all current chat message elements
- */
-function highlightAllMessages(keywordMap) {
-    const msgEls = document.querySelectorAll('#chat .mes_text');
-    for (const el of msgEls) {
-        removeKeywordHighlights(el);
-        if (keywordMap.size) {
-            highlightKeywordsInElement(el, keywordMap);
-        }
-    }
-}
-
-// Watch for new chat messages being added to DOM
-let highlightObserver = null;
-let currentKeywordMap = new Map();
-
-function setupHighlightObserver() {
-    if (highlightObserver) highlightObserver.disconnect();
-
-    const chatEl = document.getElementById('chat');
-    if (!chatEl) return;
-
-    highlightObserver = new MutationObserver((mutations) => {
-        if (!currentKeywordMap.size) return;
-        for (const mut of mutations) {
-            for (const node of mut.addedNodes) {
-                if (node.nodeType !== Node.ELEMENT_NODE) continue;
-                // A new message was added
-                const msgText = node.querySelector?.('.mes_text');
-                if (msgText) {
-                    // Small delay so ST finishes rendering markdown
-                    setTimeout(()=>{
-                        removeKeywordHighlights(msgText);
-                        highlightKeywordsInElement(msgText, currentKeywordMap);
-                    }, 150);
-                }
-            }
-            // Also handle in-place text updates (ST sometimes mutates existing mes_text)
-            if (mut.type === 'childList' || mut.type === 'characterData') {
-                const msgText = mut.target.closest?.('.mes_text');
-                if (msgText && !msgText.querySelector('.stwii--keyword')) {
-                    setTimeout(()=>{
-                        highlightKeywordsInElement(msgText, currentKeywordMap);
-                    }, 150);
-                }
-            }
-        }
-    });
-
-    highlightObserver.observe(chatEl, { childList: true, subtree: true });
-}
 
 const init = ()=>{
     console.log('🟢 [STWII] Функция init() запущена');
@@ -273,8 +109,6 @@ const init = ()=>{
     trigger.classList.add('stwii--trigger');
     trigger.classList.add('fa-solid', 'fa-fw', 'fa-book-atlas');
     trigger.title = 'Active WI\n---\nright click for options';
-    
-    console.log('🟢 [STWII] Элемент trigger создан');
     
     // === DRAG AND DROP LOGIC ===
     let isDragging = false;
@@ -286,56 +120,38 @@ const init = ()=>{
     let touchStartY = 0;
     let justOpened = false;
 
-    // Load position with validation
     const savedPos = localStorage.getItem('stwii--trigger-position');
     if (savedPos) {
         try {
             const pos = JSON.parse(savedPos);
-            console.log('🟢 [STWII] Загруженная позиция:', pos);
-            
             const leftVal = parseFloat(pos.x);
             const topVal = parseFloat(pos.y);
-            
             if (!isNaN(leftVal) && !isNaN(topVal) && 
                 leftVal >= 0 && leftVal < window.innerWidth - 50 &&
                 topVal >= 0 && topVal < window.innerHeight - 50) {
                 trigger.style.left = pos.x;
                 trigger.style.top = pos.y;
-                console.log('✅ [STWII] Позиция восстановлена');
             } else {
-                console.log('⚠️ [STWII] Позиция невалидна, используем дефолт');
                 localStorage.removeItem('stwii--trigger-position');
             }
         } catch(e) {
-            console.error('🔴 [STWII] Ошибка загрузки позиции:', e);
             localStorage.removeItem('stwii--trigger-position');
         }
     }
 
     function savePosition() {
-        const pos = {
-            x: trigger.style.left,
-            y: trigger.style.top
-        };
-        localStorage.setItem('stwii--trigger-position', JSON.stringify(pos));
-        console.log('💾 [STWII] Позиция сохранена:', pos);
+        localStorage.setItem('stwii--trigger-position', JSON.stringify({ x: trigger.style.left, y: trigger.style.top }));
     }
 
     function moveTrigger(clientX, clientY) {
-        let newX = clientX - offsetX;
-        let newY = clientY - offsetY;
-        
-        newX = Math.max(0, Math.min(newX, window.innerWidth - trigger.offsetWidth));
-        newY = Math.max(0, Math.min(newY, window.innerHeight - trigger.offsetHeight));
-        
+        let newX = Math.max(0, Math.min(clientX - offsetX, window.innerWidth - trigger.offsetWidth));
+        let newY = Math.max(0, Math.min(clientY - offsetY, window.innerHeight - trigger.offsetHeight));
         trigger.style.left = newX + 'px';
         trigger.style.top = newY + 'px';
     }
 
-    // Mouse events
     trigger.addEventListener('mousedown', function(e) {
-        if (e.button !== 0) return; // Only left click
-        console.log('🖱️ [STWII] MouseDown');
+        if (e.button !== 0) return;
         isDragging = true;
         hasMoved = false;
         const rect = trigger.getBoundingClientRect();
@@ -356,36 +172,27 @@ const init = ()=>{
         if (isDragging) {
             isDragging = false;
             trigger.style.opacity = '';
-            if (hasMoved) {
-                savePosition();
-            }
+            if (hasMoved) savePosition();
         }
     });
 
-    // Touch support
     trigger.addEventListener('touchstart', function(e) {
-        console.log('📱 [STWII] TouchStart');
         touchStartTime = Date.now();
         hasMoved = false;
         isDragging = true;
-        
         const rect = trigger.getBoundingClientRect();
         const touch = e.touches[0];
-        
         touchStartX = touch.clientX;
         touchStartY = touch.clientY;
-        
         offsetX = touch.clientX - rect.left;
         offsetY = touch.clientY - rect.top;
     }, {passive: true});
 
     document.addEventListener('touchmove', function(e) {
         if (!isDragging) return;
-        
         const touch = e.touches[0];
         const deltaX = Math.abs(touch.clientX - touchStartX);
         const deltaY = Math.abs(touch.clientY - touchStartY);
-        
         if (deltaX > 10 || deltaY > 10) {
             hasMoved = true;
             trigger.style.opacity = '0.7';
@@ -396,29 +203,21 @@ const init = ()=>{
 
     trigger.addEventListener('touchend', function(e) {
         const touchDuration = Date.now() - touchStartTime;
-        
-        console.log('📱 [STWII] TouchEnd - moved:', hasMoved, 'duration:', touchDuration);
-        
         isDragging = false;
         trigger.style.opacity = '';
-        
         if (hasMoved) {
             savePosition();
             e.preventDefault();
             e.stopPropagation();
         } else if (touchDuration < 300) {
-            // Short tap - toggle panel
-            console.log('👆 [STWII] Короткий тап - переключаем панель');
             togglePanel();
             e.preventDefault();
             e.stopPropagation();
         }
-        
         hasMoved = false;
     }, {capture: true});
 
     document.body.append(trigger);
-    console.log('🟢 [STWII] Trigger добавлен в body');
 
     const panel = document.createElement('div');
     panel.classList.add('stwii--panel');
@@ -432,90 +231,58 @@ const init = ()=>{
         const rect = trigger.getBoundingClientRect();
         const panelWidth = Math.min(350, window.innerWidth - 20);
         
-        // Temporarily show to measure height
         const wasHidden = !panelElement.classList.contains('stwii--isActive');
         if (wasHidden) {
             panelElement.style.visibility = 'hidden';
             panelElement.style.display = 'flex';
         }
-        
         const panelHeight = panelElement.offsetHeight;
-        
         if (wasHidden) {
             panelElement.style.display = '';
             panelElement.style.visibility = '';
         }
         
-        let left, top;
-        
-        // Try to position to the right of trigger
+        let left;
         if (rect.right + 10 + panelWidth <= window.innerWidth) {
             left = rect.right + 10;
-        } 
-        // Try to position to the left
-        else if (rect.left - 10 - panelWidth >= 0) {
+        } else if (rect.left - 10 - panelWidth >= 0) {
             left = rect.left - panelWidth - 10;
-        }
-        // Center horizontally if no space on sides
-        else {
+        } else {
             left = Math.max(10, (window.innerWidth - panelWidth) / 2);
         }
         
-        // Vertical positioning
-        top = rect.top;
-        
-        // Adjust if goes below screen
-        if (top + panelHeight > window.innerHeight - 10) {
-            top = Math.max(10, window.innerHeight - panelHeight - 10);
-        }
-        
-        // Ensure not above screen
-        if (top < 10) {
-            top = 10;
-        }
+        let top = rect.top;
+        if (top + panelHeight > window.innerHeight - 10) top = Math.max(10, window.innerHeight - panelHeight - 10);
+        if (top < 10) top = 10;
         
         panelElement.style.left = left + 'px';
         panelElement.style.top = top + 'px';
-        
-        console.log('📍 [STWII] Панель позиционирована:', {left, top, panelWidth, panelHeight});
     }
 
     function togglePanel() {
         configPanel.classList.remove('stwii--isActive');
         const isOpening = !panel.classList.contains('stwii--isActive');
         panel.classList.toggle('stwii--isActive');
-        
         if (isOpening) {
             justOpened = true;
             positionPanel(panel);
-            setTimeout(() => {
-                justOpened = false;
-            }, 300);
+            setTimeout(() => { justOpened = false; }, 300);
         }
-        
-        console.log('📊 [STWII] Панель:', panel.classList.contains('stwii--isActive') ? 'открыта' : 'закрыта');
     }
 
     function toggleConfigPanel() {
         panel.classList.remove('stwii--isActive');
         const isOpening = !configPanel.classList.contains('stwii--isActive');
         configPanel.classList.toggle('stwii--isActive');
-        
         if (isOpening) {
             justOpened = true;
             positionPanel(configPanel);
-            setTimeout(() => {
-                justOpened = false;
-            }, 300);
+            setTimeout(() => { justOpened = false; }, 300);
         }
     }
 
     trigger.addEventListener('click', (e)=>{
-        console.log('🖱️ [STWII] Click');
-        if (hasMoved) {
-            hasMoved = false;
-            return;
-        }
+        if (hasMoved) { hasMoved = false; return; }
         e.stopPropagation();
         togglePanel();
     });
@@ -527,133 +294,84 @@ const init = ()=>{
     });
 
     function closePanels() {
-        if (panel.classList.contains('stwii--isActive') || 
-            configPanel.classList.contains('stwii--isActive')) {
-            console.log('❌ [STWII] Закрываем панели');
-            panel.classList.remove('stwii--isActive');
-            configPanel.classList.remove('stwii--isActive');
-        }
+        panel.classList.remove('stwii--isActive');
+        configPanel.classList.remove('stwii--isActive');
     }
 
     document.addEventListener('click', (e)=>{
         if (justOpened) return;
-        
-        if (!panel.contains(e.target) && 
-            !configPanel.contains(e.target) && 
-            !trigger.contains(e.target)) {
-            closePanels();
-        }
+        if (!panel.contains(e.target) && !configPanel.contains(e.target) && !trigger.contains(e.target)) closePanels();
     });
 
     document.addEventListener('touchstart', (e)=>{
         if (justOpened) return;
-        
-        if (!panel.contains(e.target) && 
-            !configPanel.contains(e.target) && 
-            !trigger.contains(e.target)) {
-            closePanels();
-        }
+        if (!panel.contains(e.target) && !configPanel.contains(e.target) && !trigger.contains(e.target)) closePanels();
     }, {passive: true});
 
     window.addEventListener('resize', () => {
-        if (panel.classList.contains('stwii--isActive')) {
-            positionPanel(panel);
-        }
-        if (configPanel.classList.contains('stwii--isActive')) {
-            positionPanel(configPanel);
-        }
+        if (panel.classList.contains('stwii--isActive')) positionPanel(panel);
+        if (configPanel.classList.contains('stwii--isActive')) positionPanel(configPanel);
     });
 
-    const rowGroup = document.createElement('label');
-    rowGroup.classList.add('stwii--configRow');
-    rowGroup.title = 'Group entries by World Info book';
-    const cbGroup = document.createElement('input');
-    cbGroup.type = 'checkbox';
-    cbGroup.checked = extension_settings.worldInfoInfo?.group ?? true;
-    cbGroup.addEventListener('click', ()=>{
-        if (!extension_settings.worldInfoInfo) {
-            extension_settings.worldInfoInfo = {};
-        }
-        extension_settings.worldInfoInfo.group = cbGroup.checked;
+    // === CONFIG PANEL ===
+    function makeConfigRow(labelText, title, checked, onChange) {
+        const row = document.createElement('label');
+        row.classList.add('stwii--configRow');
+        row.title = title;
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = checked;
+        cb.addEventListener('click', ()=>onChange(cb.checked));
+        row.append(cb);
+        const lbl = document.createElement('div');
+        lbl.textContent = labelText;
+        row.append(lbl);
+        configPanel.append(row);
+        return cb;
+    }
+
+    makeConfigRow('Group by book', 'Group entries by World Info book',
+        extension_settings.worldInfoInfo?.group ?? true,
+        (v)=>{ if (!extension_settings.worldInfoInfo) extension_settings.worldInfoInfo = {}; extension_settings.worldInfoInfo.group = v; updatePanel(currentEntryList); saveSettingsDebounced(); });
+
+    makeConfigRow('Show in order', 'Show in insertion depth / order instead of alphabetically',
+        extension_settings.worldInfoInfo?.order ?? true,
+        (v)=>{ if (!extension_settings.worldInfoInfo) extension_settings.worldInfoInfo = {}; extension_settings.worldInfoInfo.order = v; updatePanel(currentEntryList); saveSettingsDebounced(); });
+
+    makeConfigRow('Show messages', 'Indicate message history (only when ungrouped and shown in order)',
+        extension_settings.worldInfoInfo?.mes ?? true,
+        (v)=>{ if (!extension_settings.worldInfoInfo) extension_settings.worldInfoInfo = {}; extension_settings.worldInfoInfo.mes = v; updatePanel(currentEntryList); saveSettingsDebounced(); });
+
+    makeConfigRow('Show token counts', 'Show estimated token count per entry and total budget',
+        extension_settings.worldInfoInfo?.showTokens ?? true,
+        (v)=>{ if (!extension_settings.worldInfoInfo) extension_settings.worldInfoInfo = {}; extension_settings.worldInfoInfo.showTokens = v; updatePanel(currentEntryList); saveSettingsDebounced(); });
+
+    // Token limit row
+    const tokenRow = document.createElement('label');
+    tokenRow.classList.add('stwii--configRow');
+    tokenRow.title = 'Token budget limit (0 = unlimited)';
+    const tokenInput = document.createElement('input');
+    tokenInput.type = 'number';
+    tokenInput.min = '0';
+    tokenInput.max = '99999';
+    tokenInput.step = '100';
+    tokenInput.style.cssText = 'width:70px;background:transparent;border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:inherit;padding:2px 4px;font-size:inherit;flex-shrink:0';
+    tokenInput.value = extension_settings.worldInfoInfo?.tokenLimit ?? 2000;
+    tokenInput.addEventListener('change', ()=>{
+        if (!extension_settings.worldInfoInfo) extension_settings.worldInfoInfo = {};
+        extension_settings.worldInfoInfo.tokenLimit = parseInt(tokenInput.value) || 0;
         updatePanel(currentEntryList);
         saveSettingsDebounced();
     });
-    rowGroup.append(cbGroup);
-    const lblGroup = document.createElement('div');
-    lblGroup.textContent = 'Group by book';
-    rowGroup.append(lblGroup);
-    configPanel.append(rowGroup);
-
-    const orderRow = document.createElement('label');
-    orderRow.classList.add('stwii--configRow');
-    orderRow.title = 'Show in insertion depth / order instead of alphabetically';
-    const cbOrder = document.createElement('input');
-    cbOrder.type = 'checkbox';
-    cbOrder.checked = extension_settings.worldInfoInfo?.order ?? true;
-    cbOrder.addEventListener('click', ()=>{
-        if (!extension_settings.worldInfoInfo) {
-            extension_settings.worldInfoInfo = {};
-        }
-        extension_settings.worldInfoInfo.order = cbOrder.checked;
-        updatePanel(currentEntryList);
-        saveSettingsDebounced();
-    });
-    orderRow.append(cbOrder);
-    const lblOrder = document.createElement('div');
-    lblOrder.textContent = 'Show in order';
-    orderRow.append(lblOrder);
-    configPanel.append(orderRow);
-
-    const mesRow = document.createElement('label');
-    mesRow.classList.add('stwii--configRow');
-    mesRow.title = 'Indicate message history (only when ungrouped and shown in order)';
-    const cbMes = document.createElement('input');
-    cbMes.type = 'checkbox';
-    cbMes.checked = extension_settings.worldInfoInfo?.mes ?? true;
-    cbMes.addEventListener('click', ()=>{
-        if (!extension_settings.worldInfoInfo) {
-            extension_settings.worldInfoInfo = {};
-        }
-        extension_settings.worldInfoInfo.mes = cbMes.checked;
-        updatePanel(currentEntryList);
-        saveSettingsDebounced();
-    });
-    mesRow.append(cbMes);
-    const lblMes = document.createElement('div');
-    lblMes.textContent = 'Show messages';
-    mesRow.append(lblMes);
-    configPanel.append(mesRow);
-
-    // Config: toggle keyword highlight
-    const highlightRow = document.createElement('label');
-    highlightRow.classList.add('stwii--configRow');
-    highlightRow.title = 'Highlight triggered WI keywords in chat messages';
-    const cbHighlight = document.createElement('input');
-    cbHighlight.type = 'checkbox';
-    cbHighlight.checked = extension_settings.worldInfoInfo?.highlight ?? true;
-    cbHighlight.addEventListener('click', ()=>{
-        if (!extension_settings.worldInfoInfo) {
-            extension_settings.worldInfoInfo = {};
-        }
-        extension_settings.worldInfoInfo.highlight = cbHighlight.checked;
-        saveSettingsDebounced();
-        if (cbHighlight.checked) {
-            highlightAllMessages(currentKeywordMap);
-        } else {
-            // Remove all highlights
-            const msgEls = document.querySelectorAll('#chat .mes_text');
-            for (const el of msgEls) removeKeywordHighlights(el);
-            removeTooltip();
-        }
-    });
-    highlightRow.append(cbHighlight);
-    const lblHighlight = document.createElement('div');
-    lblHighlight.textContent = 'Highlight keywords in chat';
-    highlightRow.append(lblHighlight);
-    configPanel.append(highlightRow);
+    tokenRow.append(tokenInput);
+    const lblToken = document.createElement('div');
+    lblToken.textContent = 'Token budget limit';
+    tokenRow.append(lblToken);
+    configPanel.append(tokenRow);
 
     document.body.append(configPanel);
 
+    // === BADGE ===
     let entries = [];
     let count = -1;
     
@@ -693,25 +411,11 @@ const init = ()=>{
         for (const entry of entryList) {
             entry.type = 'wi';
             entry.sticky = parseInt(/**@type {string}*/(await SlashCommandParser.commands['wi-get-timed-effect'].callback(
-                {
-                    effect: 'sticky',
-                    format: 'number',
-                    file: `${entry.world}`,
-                    _scope: null,
-                    _abortController: null,
-                },
+                { effect: 'sticky', format: 'number', file: `${entry.world}`, _scope: null, _abortController: null },
                 entry.uid,
             )));
         }
         currentEntryList = [...entryList];
-
-        // Update keyword map and re-highlight
-        const isHighlightEnabled = extension_settings.worldInfoInfo?.highlight ?? true;
-        currentKeywordMap = buildKeywordMap(entryList);
-        if (isHighlightEnabled) {
-            highlightAllMessages(currentKeywordMap);
-        }
-
         updatePanel(entryList, true);
     });
 
@@ -719,14 +423,22 @@ const init = ()=>{
         const isGrouped = extension_settings.worldInfoInfo?.group ?? true;
         const isOrdered = extension_settings.worldInfoInfo?.order ?? true;
         const isMes = extension_settings.worldInfoInfo?.mes ?? true;
+        const showTokens = extension_settings.worldInfoInfo?.showTokens ?? true;
+        const tokenLimit = extension_settings.worldInfoInfo?.tokenLimit ?? 2000;
+        const disabled = getDisabledSet();
+
         panel.innerHTML = '';
+        
         let grouped;
         if (isGrouped) {
-            grouped = Object.groupBy(entryList, (it,idx)=>it.world);
+            grouped = Object.groupBy(entryList, (it)=>it.world);
         } else {
             grouped = {'WI Entries': [...entryList]};
         }
         const depthPos = [world_info_position.ANBottom, world_info_position.ANTop, world_info_position.atDepth];
+        
+        let totalTokens = 0;
+        
         for (const [world, entries] of Object.entries(grouped)) {
             for (const e of entries) {
                 e.depth = e.position == world_info_position.atDepth ? e.depth : (chat_metadata[metadata_keys.depth] + (e.position == world_info_position.ANTop ? 0.1 : 0));
@@ -806,8 +518,16 @@ const init = ()=>{
                 } else {
                     e.title = '';
                 }
+
                 if (entry.type == 'mes') e.classList.add('stwii--messages');
                 if (entry.type == 'note') e.classList.add('stwii--note');
+
+                // Disabled state visual
+                const isDisabled = entry.type === 'wi' && disabled.has(entryKey(entry));
+                if (isDisabled) {
+                    e.classList.add('stwii--isDisabled');
+                }
+
                 const strat = document.createElement('div');
                 strat.classList.add('stwii--strategy');
                 if (entry.type == 'wi') {
@@ -819,6 +539,7 @@ const init = ()=>{
                     strat.classList.add('fa-solid', 'fa-fw', 'fa-note-sticky');
                 }
                 e.append(strat);
+
                 const title = document.createElement('div');
                 title.classList.add('stwii--title');
                 if (entry.type == 'wi') {
@@ -847,16 +568,69 @@ const init = ()=>{
                     e.title = `Author's Note\n---\n${entry.text}`;
                 }
                 e.append(title);
+
+                // Token count badge per entry
+                if (entry.type === 'wi' && showTokens) {
+                    const tk = entryTokens(entry);
+                    if (!isDisabled) totalTokens += tk;
+                    const tkEl = document.createElement('div');
+                    tkEl.classList.add('stwii--tokens');
+                    tkEl.textContent = `~${tk}`;
+                    tkEl.title = `~${tk} estimated tokens`;
+                    e.append(tkEl);
+                }
+
                 const sticky = document.createElement('div');
                 sticky.classList.add('stwii--sticky');
                 sticky.textContent = entry.sticky ? `📌 ${entry.sticky}` : '';
                 sticky.title = `Sticky for ${entry.sticky} more rounds`;
                 e.append(sticky);
+
+                // Click = toggle disable for WI entries
+                if (entry.type === 'wi') {
+                    e.style.cursor = 'pointer';
+                    e.title = (isDisabled ? '[ОТКЛЮЧЕНА] Клик чтобы включить\n' : '[Клик чтобы отключить]\n') + e.title;
+                    e.addEventListener('click', async (evt)=>{
+                        evt.stopPropagation();
+                        await toggleEntryDisabled(entry);
+                        updatePanel(currentEntryList);
+                    });
+                } else {
+                    e.style.cursor = 'help';
+                }
+
                 panel.append(e);
             }
         }
+
+        // Token budget bar at the bottom of panel
+        if (showTokens && entryList.some(e=>e.type === 'wi')) {
+            const budgetWrapper = document.createElement('div');
+            budgetWrapper.classList.add('stwii--budget-wrapper');
+
+            const budgetLabel = document.createElement('div');
+            budgetLabel.classList.add('stwii--budget-label');
+            const overBudget = tokenLimit > 0 && totalTokens > tokenLimit;
+            budgetLabel.textContent = tokenLimit > 0
+                ? `~${totalTokens} / ${tokenLimit} tk${overBudget ? ' ⚠️ OVER BUDGET' : ''}`
+                : `~${totalTokens} tk`;
+            if (overBudget) budgetLabel.classList.add('stwii--over-budget');
+            budgetWrapper.append(budgetLabel);
+
+            if (tokenLimit > 0) {
+                const barTrack = document.createElement('div');
+                barTrack.classList.add('stwii--budget-track');
+                const barFill = document.createElement('div');
+                barFill.classList.add('stwii--budget-fill');
+                barFill.style.width = Math.min(100, (totalTokens / tokenLimit) * 100) + '%';
+                if (overBudget) barFill.classList.add('stwii--over-budget');
+                barTrack.append(barFill);
+                budgetWrapper.append(barTrack);
+            }
+
+            panel.append(budgetWrapper);
+        }
         
-        // Reposition panel after content update
         if (panel.classList.contains('stwii--isActive')) {
             positionPanel(panel);
         }
@@ -869,11 +643,6 @@ const init = ()=>{
             panel.innerHTML = 'No active entries';
             updateBadge([]);
             currentEntryList = [];
-            // Clear keyword map and highlights
-            currentKeywordMap = new Map();
-            const msgEls = document.querySelectorAll('#chat .mes_text');
-            for (const el of msgEls) removeKeywordHighlights(el);
-            removeTooltip();
         }
         return original_debug.bind(console)(...args);
     };
@@ -885,11 +654,6 @@ const init = ()=>{
             panel.innerHTML = 'No active entries';
             updateBadge([]);
             currentEntryList = [];
-            // Clear keyword map and highlights
-            currentKeywordMap = new Map();
-            const msgEls = document.querySelectorAll('#chat .mes_text');
-            for (const el of msgEls) removeKeywordHighlights(el);
-            removeTooltip();
         }
         return original_log.bind(console)(...args);
     };
@@ -902,9 +666,6 @@ const init = ()=>{
         returns: 'list of triggered WI entries',
         helpString: 'Get the list of World Info entries triggered on the last generation.',
     }));
-
-    // Start observing chat for new messages
-    setupHighlightObserver();
     
     console.log('🟢 [STWII] Расширение полностью загружено!');
 };
