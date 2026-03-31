@@ -1,0 +1,210 @@
+.stwii--trigger {
+    position: absolute;
+    bottom: 0.125em;
+    left: 0.25em;
+    font-size: 2em;
+    opacity: 0.25;
+    transition: opacity 200ms;
+    cursor: pointer;
+    z-index: 3010;
+    filter: drop-shadow(2px 4px 6px black);
+    display: block;
+    anchor-name: --stac--wiAnchor;
+
+    &:not([data-stwii--badge-count="0"]) {
+        &:hover::after { opacity: 1; }
+        &::after {
+            content: attr(data-stwii--badge-count);
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            font-size: calc(0.65 * var(--mainFontSize));
+            font-weight: bold;
+            font-family: var(--mainFontFamily);
+            color: white;
+            background: black;
+            line-height: 1;
+            padding: 0.25em;
+            border-radius: 50%;
+            aspect-ratio: 1 / 1;
+            height: 1lh;
+            text-align: center;
+            pointer-events: none;
+            transition: 200ms;
+        }
+        &.stwii--badge-in::after {
+            animation: stwii--badge-popin 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        &.stwii--badge-out::after {
+            animation: stwii--badge-popin 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) reverse;
+        }
+        &.stwii--badge-bounce::after {
+            animation: stwii--badge-bounce 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            animation-iteration-count: 2;
+        }
+    }
+}
+
+.stwii--panel {
+    filter: drop-shadow(1px 1px 2px var(--black50a));
+    z-index: 30000;
+    overflow: auto;
+    border-radius: 10px;
+    aspect-ratio: unset;
+    padding: 0.5em;
+    display: none;
+    flex-direction: column;
+    right: 3.5em;
+    top: 1em;
+    font-size: small;
+    max-height: calc(100vh - 1em);
+    max-width: calc((100vw - var(--sheldWidth)) / 2 - 3.5em);
+    background-color: var(--secondaryBg, var(--SmartThemeBlurTintColor));
+    position: fixed;
+    position-anchor: --stac--wiAnchor;
+    position-area: top right;
+    position-try-fallbacks: flip-block, flip-inline;
+    margin-bottom: -2em;
+
+    &.stwii--isActive {
+        display: flex;
+    }
+}
+
+
+.stwii--world {
+    font-weight: bold;
+}
+.stwii--entry {
+    gap: 0.5em;
+    padding-left: 1em;
+    display: flex;
+    align-items: center;
+    opacity: 0.75;
+    cursor: help;
+    transition: 200ms;
+    &:hover {
+        opacity: 1;
+    }
+    &.stwii--isBroken {
+        background-color: rgb(255 0 0 / 0.5);
+    }
+}
+.stwii--note {
+    .stwii--strategy {
+        &::before {
+            opacity: 0.5;
+        }
+    }
+}
+.stwii--messages {
+    .stwii--strategy {
+        position: relative;
+        &::after {
+            content: attr(data-stwii--count);
+            font-family: var(--mainFontFamily);
+            position: absolute;
+            inset: 0;
+            text-shadow:
+                -1px -1px 1px black,
+                1px 1px 1px black,
+                -1px 1px 1px black,
+                1px -1px 1px black
+            ;
+            font-size: 0.75em;
+            padding-top: 0.25em;
+        }
+        &::before {
+            opacity: 0.5;
+        }
+    }
+    .stwii--title {
+        flex: 1 1 auto;
+        display: flex;
+        flex-direction: column;
+        font-size: 0.5em;
+        width: 0;
+        .stwii--first, .stwii--last {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .stwii--sep {
+            opacity: 0.75;
+            flex: 0 0 auto;
+            line-height: 0.125em;
+            padding-bottom: 0.6em;
+        }
+    }
+
+}
+
+
+.stwii--configRow {
+    display: flex;
+    align-items: center;
+    gap: 1em;
+    padding: 0.5em;
+    cursor: pointer;
+    opacity: 0.5;
+    transition: 200ms;
+    &:hover {
+        opacity: 1;
+    }
+}
+
+
+
+
+@keyframes stwii--badge-popin {
+    0% {
+        transform: scale(0);
+        opacity: 0;
+    }
+    48% {
+        transform: scale(1.2);
+        opacity: 1;
+    }
+    80% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    100% {
+        transform: scale(1);
+        opacity: 0.5;
+    }
+}
+@keyframes stwii--badge-bounce {
+    0% {
+        opacity: 0.5;
+        transform: scale(1) translateY(0)
+    }
+    10% {
+        opacity: 1;
+        transform: scale(1.1, .9) translateY(0)
+    }
+    30% {
+        opacity: 1;
+        transform: scale(.9, 1.1) translateY(-.5em)
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1.05, .95) translateY(0)
+    }
+    57% {
+        opacity: 1;
+        transform: scale(1) translateY(-.125em)
+    }
+    64% {
+        opacity: 1;
+        transform: scale(1) translateY(0)
+    }
+    90% {
+        opacity: 1;
+        transform: scale(1) translateY(0)
+    }
+    100% {
+        opacity: 0.5;
+        transform: scale(1) translateY(0)
+    }
+}
