@@ -7,218 +7,242 @@ import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.j
 import { delay } from '../../../utils.js';
 import { world_info_position } from '../../../world-info.js';
 
-console.log('🟢 [STWII] Начало загрузки расширения World Info Info');
+console.log('🟢 [STWII] World Info Info v2.0 loading...');
 
-const strategy = {
-    constant: '🔵',
-    normal: '🟢',
-    vectorized: '🔗',
+// ─── Strategy config ──────────────────────────────────────────────────────────
+const STRATEGIES = {
+    constant:   { icon: '🔵', label: 'Constant',    cssVar: '--stwii-c-constant',   fallback: '#4a90d9' },
+    normal:     { icon: '🟢', label: 'Key Match',   cssVar: '--stwii-c-normal',     fallback: '#27ae60' },
+    vectorized: { icon: '🔗', label: 'Vectorized',  cssVar: '--stwii-c-vector',     fallback: '#8e44ad' },
 };
 
-const getStrategy = (entry)=>{
-    if (entry.constant === true) {
-        return 'constant';
-    } else if (entry.vectorized === true) {
-        return 'vectorized';
-    } else {
-        return 'normal';
-    }
+const getStrategy = (entry) => {
+    if (entry.constant === true)   return 'constant';
+    if (entry.vectorized === true) return 'vectorized';
+    return 'normal';
 };
 
-// === TOKEN ESTIMATION ===
-// ~4 chars/token for Latin, ~1.5 chars/token for Cyrillic/CJK
-function estimateTokens(text) {
+// ─── Token estimation ─────────────────────────────────────────────────────────
+const estimateTokens = (text) => {
     if (!text) return 0;
-    let tokens = 0;
-    for (const char of text) {
-        const code = char.codePointAt(0);
-        if (
-            (code >= 0x0400 && code <= 0x04FF) || // Cyrillic
-            (code >= 0x4E00 && code <= 0x9FFF) || // CJK
-            (code >= 0x3000 && code <= 0x303F) || // CJK punctuation
-            (code >= 0x0600 && code <= 0x06FF)    // Arabic
-        ) {
-            tokens += 0.65;
-        } else {
-            tokens += 0.25;
+    // ~1.3 tokens per word — rough but fast
+    return Math.ceil((text.match(/\S+/g) || []).length * 1.3);
+};
+
+// ─── Find which key triggered an entry ───────────────────────────────────────
+const findMatchedKey = (entry, searchText) => {
+    if (!searchText || !entry.key?.length) return null;
+    const lower = searchText.toLowerCase();
+    for (const key of entry.key) {
+        if (key?.trim() && lower.includes(key.toLowerCase())) return key;
+    }
+    return null;
+};
+
+const getRecentChatText = (depth = 15) =>
+    chat.slice(-depth).map(m => m.mes || '').join('\n');
+
+// ─── Inline tooltip ───────────────────────────────────────────────────────────
+let _tooltip = null;
+const getTooltip = () => {
+    if (!_tooltip) {
+        _tooltip = document.createElement('div');
+        _tooltip.classList.add('stwii--inline-tooltip');
+        document.body.append(_tooltip);
+        document.addEventListener('click', (e) => {
+            if (!_tooltip.contains(e.target) && !e.target.classList.contains('stwii--highlight'))
+                _tooltip.classList.remove('stwii--isActive');
+        }, true);
+    }
+    return _tooltip;
+};
+
+const showTooltip = (entry, anchor) => {
+    const tt = getTooltip();
+    const strat = getStrategy(entry);
+    const tokens = estimateTokens(entry.content);
+    const title = entry.comment?.length ? entry.comment : entry.key.join(', ');
+    const preview = (entry.content || '').slice(0, 350) + ((entry.content?.length || 0) > 350 ? '…' : '');
+
+    tt.innerHTML = `
+        <div class="stwii--tt-header">
+            <span class="stwii--tt-icon">${STRATEGIES[strat].icon}</span>
+            <span class="stwii--tt-title">${title}</span>
+            <span class="stwii--tt-tokens">~${tokens} tok</span>
+        </div>
+        <div class="stwii--tt-meta">
+            <span class="stwii--tt-world">[${entry.world}]</span>
+            ${entry.matchedKey ? `<span class="stwii--tt-key">🔑 <em>${entry.matchedKey}</em></span>` : ''}
+        </div>
+        <div class="stwii--tt-content">${preview}</div>
+    `;
+
+    tt.classList.add('stwii--isActive');
+
+    const rect = anchor.getBoundingClientRect();
+    const tw = tt.offsetWidth  || 300;
+    const th = tt.offsetHeight || 120;
+    let left = rect.left;
+    let top  = rect.bottom + 6;
+    if (left + tw > window.innerWidth  - 10) left = window.innerWidth  - tw - 10;
+    if (left < 10) left = 10;
+    if (top  + th > window.innerHeight - 10) top  = rect.top - th - 6;
+    tt.style.left = left + 'px';
+    tt.style.top  = top  + 'px';
+};
+
+// ─── Inline key highlighting in chat messages ─────────────────────────────────
+const clearInlineHighlights = () => {
+    document.querySelectorAll('.stwii--highlight').forEach(el => {
+        el.parentNode.replaceChild(document.createTextNode(el.textContent), el);
+    });
+    document.querySelectorAll('#chat .mes_text').forEach(el => el.normalize());
+};
+
+const highlightKeysInElement = (rootEl, entries) => {
+    const keyMap = new Map();
+    for (const entry of entries) {
+        for (const key of (entry.key || [])) {
+            if (key?.trim()) keyMap.set(key.toLowerCase(), entry);
         }
     }
-    return Math.ceil(tokens);
-}
+    if (!keyMap.size) return;
 
-function entryTokens(entry) {
-    return estimateTokens(entry.content ?? '');
-}
+    const sortedKeys = [...keyMap.keys()].sort((a, b) => b.length - a.length);
+    const escaped = sortedKeys.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const regex = new RegExp(`(${escaped.join('|')})`, 'gi');
 
-// === DISABLED ENTRIES ===
-function getDisabledKey() {
-    return `stwii--disabled--${chat_metadata?.chat_id ?? 'global'}`;
-}
+    const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => {
+            const p = node.parentElement;
+            if (p.classList.contains('stwii--highlight')) return NodeFilter.FILTER_REJECT;
+            if (['SCRIPT', 'STYLE', 'CODE'].includes(p.tagName)) return NodeFilter.FILTER_REJECT;
+            return NodeFilter.FILTER_ACCEPT;
+        }
+    });
 
-function getDisabledSet() {
-    try {
-        const raw = localStorage.getItem(getDisabledKey());
-        return raw ? new Set(JSON.parse(raw)) : new Set();
-    } catch { return new Set(); }
-}
+    const nodes = [];
+    let n;
+    while ((n = walker.nextNode())) nodes.push(n);
 
-function saveDisabledSet(set) {
-    localStorage.setItem(getDisabledKey(), JSON.stringify([...set]));
-}
+    for (const textNode of nodes) {
+        const text = textNode.textContent;
+        if (!regex.test(text)) continue;
+        regex.lastIndex = 0;
 
-function entryKey(entry) {
-    return `${entry.world}§§§${entry.uid}`;
-}
+        const frag = document.createDocumentFragment();
+        let last = 0, m;
 
-async function toggleEntryDisabled(entry) {
-    const key = entryKey(entry);
-    const disabled = getDisabledSet();
-    const nowDisabled = !disabled.has(key);
-    if (nowDisabled) {
-        disabled.add(key);
-    } else {
-        disabled.delete(key);
+        while ((m = regex.exec(text)) !== null) {
+            if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+            const entry = keyMap.get(m[0].toLowerCase());
+            const span = document.createElement('span');
+            span.classList.add('stwii--highlight');
+            span.dataset.stwiiStrategy = getStrategy(entry);
+            span.textContent = m[0];
+            span.addEventListener('click', (e) => { e.stopPropagation(); showTooltip(entry, span); });
+            frag.appendChild(span);
+            last = m.index + m[0].length;
+        }
+        if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+        textNode.parentNode.replaceChild(frag, textNode);
     }
-    saveDisabledSet(disabled);
+};
 
-    // Try to toggle in ST via slash command
-    try {
-        await SlashCommandParser.commands['wi-set-entry-field']?.callback(
-            {
-                file: entry.world,
-                field: 'disable',
-                _scope: null,
-                _abortController: null,
-            },
-            `${entry.uid}|||${nowDisabled ? 'true' : 'false'}`,
-        );
-    } catch(e) {
-        console.warn('[STWII] Could not toggle entry via slash cmd:', e);
-    }
+const applyInlineHighlights = (entries) => {
+    if (!(extension_settings.worldInfoInfo?.inlineHighlight ?? true)) return;
+    clearInlineHighlights();
+    const wiEntries = entries.filter(e => e.type === 'wi' && e.key?.length);
+    document.querySelectorAll('#chat .mes_text').forEach(el => highlightKeysInElement(el, wiEntries));
+};
 
-    return nowDisabled;
-}
+// ─── Diff tracking ────────────────────────────────────────────────────────────
+let _prevEntryIds = new Set();
 
+const getDiffStatus = (entry) => {
+    const id = `${entry.world}§§§${entry.uid}`;
+    return _prevEntryIds.has(id) ? 'same' : 'new';
+};
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
 let generationType;
-eventSource.on(event_types.GENERATION_STARTED, (genType)=>generationType = genType);
+eventSource.on(event_types.GENERATION_STARTED, (genType) => generationType = genType);
 
-const init = ()=>{
-    console.log('🟢 [STWII] Функция init() запущена');
-    
+const init = () => {
+    console.log('🟢 [STWII] init() starting...');
+
     const trigger = document.createElement('div');
-    trigger.classList.add('stwii--trigger');
-    trigger.classList.add('fa-solid', 'fa-fw', 'fa-book-atlas');
+    trigger.classList.add('stwii--trigger', 'fa-solid', 'fa-fw', 'fa-book-atlas');
     trigger.title = 'Active WI\n---\nright click for options';
-    
-    // === DRAG AND DROP LOGIC ===
-    let isDragging = false;
-    let hasMoved = false;
-    let offsetX = 0;
-    let offsetY = 0;
-    let touchStartTime = 0;
-    let touchStartX = 0;
-    let touchStartY = 0;
+
+    // ── Drag & drop ──────────────────────────────────────────────────────────
+    let isDragging = false, hasMoved = false;
+    let offsetX = 0, offsetY = 0;
+    let touchStartTime = 0, touchStartX = 0, touchStartY = 0;
     let justOpened = false;
 
     const savedPos = localStorage.getItem('stwii--trigger-position');
     if (savedPos) {
         try {
             const pos = JSON.parse(savedPos);
-            const leftVal = parseFloat(pos.x);
-            const topVal = parseFloat(pos.y);
-            if (!isNaN(leftVal) && !isNaN(topVal) && 
-                leftVal >= 0 && leftVal < window.innerWidth - 50 &&
-                topVal >= 0 && topVal < window.innerHeight - 50) {
+            const lv = parseFloat(pos.x), tv = parseFloat(pos.y);
+            if (!isNaN(lv) && !isNaN(tv) &&
+                lv >= 0 && lv < window.innerWidth - 50 &&
+                tv >= 0 && tv < window.innerHeight - 50) {
                 trigger.style.left = pos.x;
-                trigger.style.top = pos.y;
-            } else {
-                localStorage.removeItem('stwii--trigger-position');
-            }
-        } catch(e) {
-            localStorage.removeItem('stwii--trigger-position');
-        }
+                trigger.style.top  = pos.y;
+            } else { localStorage.removeItem('stwii--trigger-position'); }
+        } catch(e) { localStorage.removeItem('stwii--trigger-position'); }
     }
 
-    function savePosition() {
-        localStorage.setItem('stwii--trigger-position', JSON.stringify({ x: trigger.style.left, y: trigger.style.top }));
-    }
+    const savePosition = () => localStorage.setItem('stwii--trigger-position',
+        JSON.stringify({ x: trigger.style.left, y: trigger.style.top }));
 
-    function moveTrigger(clientX, clientY) {
-        let newX = Math.max(0, Math.min(clientX - offsetX, window.innerWidth - trigger.offsetWidth));
-        let newY = Math.max(0, Math.min(clientY - offsetY, window.innerHeight - trigger.offsetHeight));
-        trigger.style.left = newX + 'px';
-        trigger.style.top = newY + 'px';
-    }
+    const moveTrigger = (cx, cy) => {
+        const x = Math.max(0, Math.min(cx - offsetX, window.innerWidth  - trigger.offsetWidth));
+        const y = Math.max(0, Math.min(cy - offsetY, window.innerHeight - trigger.offsetHeight));
+        trigger.style.left = x + 'px';
+        trigger.style.top  = y + 'px';
+    };
 
-    trigger.addEventListener('mousedown', function(e) {
+    trigger.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
-        isDragging = true;
-        hasMoved = false;
-        const rect = trigger.getBoundingClientRect();
-        offsetX = e.clientX - rect.left;
-        offsetY = e.clientY - rect.top;
-        trigger.style.opacity = '0.7';
-        e.preventDefault();
+        isDragging = true; hasMoved = false;
+        const r = trigger.getBoundingClientRect();
+        offsetX = e.clientX - r.left; offsetY = e.clientY - r.top;
+        trigger.style.opacity = '0.7'; e.preventDefault();
     });
-
-    document.addEventListener('mousemove', function(e) {
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return; hasMoved = true; moveTrigger(e.clientX, e.clientY); e.preventDefault();
+    });
+    document.addEventListener('mouseup', () => {
+        if (isDragging) { isDragging = false; trigger.style.opacity = ''; if (hasMoved) savePosition(); }
+    });
+    trigger.addEventListener('touchstart', (e) => {
+        touchStartTime = Date.now(); hasMoved = false; isDragging = true;
+        const r = trigger.getBoundingClientRect(), t = e.touches[0];
+        touchStartX = t.clientX; touchStartY = t.clientY;
+        offsetX = t.clientX - r.left; offsetY = t.clientY - r.top;
+    }, { passive: true });
+    document.addEventListener('touchmove', (e) => {
         if (!isDragging) return;
-        hasMoved = true;
-        moveTrigger(e.clientX, e.clientY);
-        e.preventDefault();
-    });
-
-    document.addEventListener('mouseup', function(e) {
-        if (isDragging) {
-            isDragging = false;
-            trigger.style.opacity = '';
-            if (hasMoved) savePosition();
-        }
-    });
-
-    trigger.addEventListener('touchstart', function(e) {
-        touchStartTime = Date.now();
-        hasMoved = false;
-        isDragging = true;
-        const rect = trigger.getBoundingClientRect();
-        const touch = e.touches[0];
-        touchStartX = touch.clientX;
-        touchStartY = touch.clientY;
-        offsetX = touch.clientX - rect.left;
-        offsetY = touch.clientY - rect.top;
-    }, {passive: true});
-
-    document.addEventListener('touchmove', function(e) {
-        if (!isDragging) return;
-        const touch = e.touches[0];
-        const deltaX = Math.abs(touch.clientX - touchStartX);
-        const deltaY = Math.abs(touch.clientY - touchStartY);
-        if (deltaX > 10 || deltaY > 10) {
-            hasMoved = true;
-            trigger.style.opacity = '0.7';
-            moveTrigger(touch.clientX, touch.clientY);
-            e.preventDefault();
+        const t = e.touches[0];
+        if (Math.abs(t.clientX - touchStartX) > 10 || Math.abs(t.clientY - touchStartY) > 10) {
+            hasMoved = true; trigger.style.opacity = '0.7';
+            moveTrigger(t.clientX, t.clientY); e.preventDefault();
         }
     }, { passive: false });
-
-    trigger.addEventListener('touchend', function(e) {
-        const touchDuration = Date.now() - touchStartTime;
-        isDragging = false;
-        trigger.style.opacity = '';
-        if (hasMoved) {
-            savePosition();
-            e.preventDefault();
-            e.stopPropagation();
-        } else if (touchDuration < 300) {
-            togglePanel();
-            e.preventDefault();
-            e.stopPropagation();
-        }
+    trigger.addEventListener('touchend', (e) => {
+        const dur = Date.now() - touchStartTime;
+        isDragging = false; trigger.style.opacity = '';
+        if (hasMoved) { savePosition(); e.preventDefault(); e.stopPropagation(); }
+        else if (dur < 300) { togglePanel(); e.preventDefault(); e.stopPropagation(); }
         hasMoved = false;
-    }, {capture: true});
+    }, { capture: true });
 
     document.body.append(trigger);
 
+    // ── Panels ───────────────────────────────────────────────────────────────
     const panel = document.createElement('div');
     panel.classList.add('stwii--panel');
     panel.innerHTML = '?';
@@ -226,163 +250,100 @@ const init = ()=>{
 
     const configPanel = document.createElement('div');
     configPanel.classList.add('stwii--panel');
-    
-    function positionPanel(panelElement) {
+
+    const positionPanel = (panelEl) => {
         const rect = trigger.getBoundingClientRect();
-        const panelWidth = Math.min(350, window.innerWidth - 20);
-        
-        const wasHidden = !panelElement.classList.contains('stwii--isActive');
-        if (wasHidden) {
-            panelElement.style.visibility = 'hidden';
-            panelElement.style.display = 'flex';
-        }
-        const panelHeight = panelElement.offsetHeight;
-        if (wasHidden) {
-            panelElement.style.display = '';
-            panelElement.style.visibility = '';
-        }
-        
-        let left;
-        if (rect.right + 10 + panelWidth <= window.innerWidth) {
-            left = rect.right + 10;
-        } else if (rect.left - 10 - panelWidth >= 0) {
-            left = rect.left - panelWidth - 10;
-        } else {
-            left = Math.max(10, (window.innerWidth - panelWidth) / 2);
-        }
-        
-        let top = rect.top;
-        if (top + panelHeight > window.innerHeight - 10) top = Math.max(10, window.innerHeight - panelHeight - 10);
-        if (top < 10) top = 10;
-        
-        panelElement.style.left = left + 'px';
-        panelElement.style.top = top + 'px';
-    }
+        const pw = Math.min(350, window.innerWidth - 20);
+        const wasHidden = !panelEl.classList.contains('stwii--isActive');
+        if (wasHidden) { panelEl.style.visibility = 'hidden'; panelEl.style.display = 'flex'; }
+        const ph = panelEl.offsetHeight;
+        if (wasHidden) { panelEl.style.display = ''; panelEl.style.visibility = ''; }
+        let left = rect.right + 10 + pw <= window.innerWidth ? rect.right + 10
+                 : rect.left - 10 - pw >= 0                  ? rect.left - pw - 10
+                 : Math.max(10, (window.innerWidth - pw) / 2);
+        let top = Math.max(10, Math.min(rect.top, window.innerHeight - ph - 10));
+        panelEl.style.left = left + 'px';
+        panelEl.style.top  = top  + 'px';
+    };
 
-    function togglePanel() {
+    const togglePanel = () => {
         configPanel.classList.remove('stwii--isActive');
-        const isOpening = !panel.classList.contains('stwii--isActive');
+        const opening = !panel.classList.contains('stwii--isActive');
         panel.classList.toggle('stwii--isActive');
-        if (isOpening) {
-            justOpened = true;
-            positionPanel(panel);
-            setTimeout(() => { justOpened = false; }, 300);
-        }
-    }
-
-    function toggleConfigPanel() {
+        if (opening) { justOpened = true; positionPanel(panel); setTimeout(() => justOpened = false, 300); }
+    };
+    const toggleConfigPanel = () => {
         panel.classList.remove('stwii--isActive');
-        const isOpening = !configPanel.classList.contains('stwii--isActive');
+        const opening = !configPanel.classList.contains('stwii--isActive');
         configPanel.classList.toggle('stwii--isActive');
-        if (isOpening) {
-            justOpened = true;
-            positionPanel(configPanel);
-            setTimeout(() => { justOpened = false; }, 300);
-        }
-    }
+        if (opening) { justOpened = true; positionPanel(configPanel); setTimeout(() => justOpened = false, 300); }
+    };
 
-    trigger.addEventListener('click', (e)=>{
-        if (hasMoved) { hasMoved = false; return; }
-        e.stopPropagation();
-        togglePanel();
-    });
-    
-    trigger.addEventListener('contextmenu', (evt)=>{
-        evt.preventDefault();
-        evt.stopPropagation();
-        toggleConfigPanel();
-    });
+    trigger.addEventListener('click', (e) => { if (hasMoved) { hasMoved = false; return; } e.stopPropagation(); togglePanel(); });
+    trigger.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); toggleConfigPanel(); });
 
-    function closePanels() {
+    const closePanels = () => {
         panel.classList.remove('stwii--isActive');
         configPanel.classList.remove('stwii--isActive');
-    }
-
-    document.addEventListener('click', (e)=>{
+    };
+    document.addEventListener('click', (e) => {
         if (justOpened) return;
-        if (!panel.contains(e.target) && !configPanel.contains(e.target) && !trigger.contains(e.target)) closePanels();
+        if (!panel.contains(e.target) && !configPanel.contains(e.target) && !trigger.contains(e.target))
+            closePanels();
     });
-
-    document.addEventListener('touchstart', (e)=>{
+    document.addEventListener('touchstart', (e) => {
         if (justOpened) return;
-        if (!panel.contains(e.target) && !configPanel.contains(e.target) && !trigger.contains(e.target)) closePanels();
-    }, {passive: true});
-
+        if (!panel.contains(e.target) && !configPanel.contains(e.target) && !trigger.contains(e.target))
+            closePanels();
+    }, { passive: true });
     window.addEventListener('resize', () => {
-        if (panel.classList.contains('stwii--isActive')) positionPanel(panel);
+        if (panel.classList.contains('stwii--isActive'))       positionPanel(panel);
         if (configPanel.classList.contains('stwii--isActive')) positionPanel(configPanel);
     });
 
-    // === CONFIG PANEL ===
-    function makeConfigRow(labelText, title, checked, onChange) {
+    // ── Config rows ───────────────────────────────────────────────────────────
+    const addConfigRow = (key, defaultVal, label, title, onChange) => {
         const row = document.createElement('label');
         row.classList.add('stwii--configRow');
         row.title = title;
         const cb = document.createElement('input');
         cb.type = 'checkbox';
-        cb.checked = checked;
-        cb.addEventListener('click', ()=>onChange(cb.checked));
-        row.append(cb);
+        cb.checked = extension_settings.worldInfoInfo?.[key] ?? defaultVal;
+        cb.addEventListener('click', () => {
+            if (!extension_settings.worldInfoInfo) extension_settings.worldInfoInfo = {};
+            extension_settings.worldInfoInfo[key] = cb.checked;
+            if (onChange) onChange(cb.checked);
+            saveSettingsDebounced();
+        });
         const lbl = document.createElement('div');
-        lbl.textContent = labelText;
-        row.append(lbl);
+        lbl.textContent = label;
+        row.append(cb, lbl);
         configPanel.append(row);
         return cb;
-    }
+    };
 
-    makeConfigRow('Group by book', 'Group entries by World Info book',
-        extension_settings.worldInfoInfo?.group ?? true,
-        (v)=>{ if (!extension_settings.worldInfoInfo) extension_settings.worldInfoInfo = {}; extension_settings.worldInfoInfo.group = v; updatePanel(currentEntryList); saveSettingsDebounced(); });
-
-    makeConfigRow('Show in order', 'Show in insertion depth / order instead of alphabetically',
-        extension_settings.worldInfoInfo?.order ?? true,
-        (v)=>{ if (!extension_settings.worldInfoInfo) extension_settings.worldInfoInfo = {}; extension_settings.worldInfoInfo.order = v; updatePanel(currentEntryList); saveSettingsDebounced(); });
-
-    makeConfigRow('Show messages', 'Indicate message history (only when ungrouped and shown in order)',
-        extension_settings.worldInfoInfo?.mes ?? true,
-        (v)=>{ if (!extension_settings.worldInfoInfo) extension_settings.worldInfoInfo = {}; extension_settings.worldInfoInfo.mes = v; updatePanel(currentEntryList); saveSettingsDebounced(); });
-
-    makeConfigRow('Show token counts', 'Show estimated token count per entry and total budget',
-        extension_settings.worldInfoInfo?.showTokens ?? true,
-        (v)=>{ if (!extension_settings.worldInfoInfo) extension_settings.worldInfoInfo = {}; extension_settings.worldInfoInfo.showTokens = v; updatePanel(currentEntryList); saveSettingsDebounced(); });
-
-    // Token limit row
-    const tokenRow = document.createElement('label');
-    tokenRow.classList.add('stwii--configRow');
-    tokenRow.title = 'Token budget limit (0 = unlimited)';
-    const tokenInput = document.createElement('input');
-    tokenInput.type = 'number';
-    tokenInput.min = '0';
-    tokenInput.max = '99999';
-    tokenInput.step = '100';
-    tokenInput.style.cssText = 'width:70px;background:transparent;border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:inherit;padding:2px 4px;font-size:inherit;flex-shrink:0';
-    tokenInput.value = extension_settings.worldInfoInfo?.tokenLimit ?? 2000;
-    tokenInput.addEventListener('change', ()=>{
-        if (!extension_settings.worldInfoInfo) extension_settings.worldInfoInfo = {};
-        extension_settings.worldInfoInfo.tokenLimit = parseInt(tokenInput.value) || 0;
-        updatePanel(currentEntryList);
-        saveSettingsDebounced();
-    });
-    tokenRow.append(tokenInput);
-    const lblToken = document.createElement('div');
-    lblToken.textContent = 'Token budget limit';
-    tokenRow.append(lblToken);
-    configPanel.append(tokenRow);
+    addConfigRow('group',           true,  'Group by book',          'Group entries by World Info book',                           () => updatePanel(currentEntryList));
+    addConfigRow('order',           true,  'Show in order',          'Show in insertion depth / order instead of alphabetically',  () => updatePanel(currentEntryList));
+    addConfigRow('mes',             true,  'Show messages',          'Indicate message history (ungrouped + ordered only)',         () => updatePanel(currentEntryList));
+    addConfigRow('showTokens',      true,  'Show token count',       'Show estimated token count per entry',                       () => updatePanel(currentEntryList));
+    addConfigRow('showMatchedKey',  true,  'Show triggered key',     'Show which keyword triggered the entry',                     () => updatePanel(currentEntryList));
+    addConfigRow('inlineHighlight', true,  'Highlight in chat',      'Underline trigger words in chat messages (click for info)',  (v) => { if (!v) clearInlineHighlights(); else applyInlineHighlights(currentEntryList); });
+    addConfigRow('diffHighlight',   true,  'Highlight new entries',  'Briefly highlight entries that are new since last gen',      () => {});
 
     document.body.append(configPanel);
 
-    // === BADGE ===
+    // ── Badge ─────────────────────────────────────────────────────────────────
     let entries = [];
     let count = -1;
-    
-    const updateBadge = async(newEntries)=>{
-        if (count != newEntries.length) {
-            if (newEntries.length == 0) {
+
+    const updateBadge = async (newEntries) => {
+        if (count !== newEntries.length) {
+            if (newEntries.length === 0) {
                 trigger.classList.add('stwii--badge-out');
                 await delay(510);
-                trigger.setAttribute('data-stwii--badge-count', newEntries.length.toString());
+                trigger.setAttribute('data-stwii--badge-count', '0');
                 trigger.classList.remove('stwii--badge-out');
-            } else if (count == 0) {
+            } else if (count === 0) {
                 trigger.classList.add('stwii--badge-in');
                 trigger.setAttribute('data-stwii--badge-count', newEntries.length.toString());
                 await delay(510);
@@ -401,273 +362,267 @@ const init = ()=>{
         }
         entries = newEntries;
     };
-    
+
+    // ── State ─────────────────────────────────────────────────────────────────
     let currentEntryList = [];
     let currentChat = [];
-    
-    eventSource.on(event_types.WORLD_INFO_ACTIVATED, async(entryList)=>{
+
+    // ── WI Activated ──────────────────────────────────────────────────────────
+    eventSource.on(event_types.WORLD_INFO_ACTIVATED, async (entryList) => {
         panel.innerHTML = 'Updating...';
-        updateBadge(entryList.map(it=>`${it.world}§§§${it.uid}`));
+
+        // Save previous IDs for diff
+        _prevEntryIds = new Set(currentEntryList
+            .filter(e => e.type === 'wi')
+            .map(e => `${e.world}§§§${e.uid}`));
+
+        updateBadge(entryList.map(it => `${it.world}§§§${it.uid}`));
+
+        // Enrich entries with matchedKey + tokens
+        const recentText = getRecentChatText();
         for (const entry of entryList) {
             entry.type = 'wi';
+            entry.matchedKey = entry.constant ? null : findMatchedKey(entry, recentText);
+            entry.estimatedTokens = estimateTokens(entry.content);
             entry.sticky = parseInt(/**@type {string}*/(await SlashCommandParser.commands['wi-get-timed-effect'].callback(
                 { effect: 'sticky', format: 'number', file: `${entry.world}`, _scope: null, _abortController: null },
                 entry.uid,
             )));
         }
+
         currentEntryList = [...entryList];
         updatePanel(entryList, true);
+
+        // Apply inline highlights after a short delay (let chat render first)
+        setTimeout(() => applyInlineHighlights(currentEntryList), 300);
     });
 
-    const updatePanel = (entryList, newChat = false)=>{
-        const isGrouped = extension_settings.worldInfoInfo?.group ?? true;
-        const isOrdered = extension_settings.worldInfoInfo?.order ?? true;
-        const isMes = extension_settings.worldInfoInfo?.mes ?? true;
-        const showTokens = extension_settings.worldInfoInfo?.showTokens ?? true;
-        const tokenLimit = extension_settings.worldInfoInfo?.tokenLimit ?? 2000;
-        const disabled = getDisabledSet();
+    // Also re-apply highlights when a new message renders
+    eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, () => {
+        if (currentEntryList.length) setTimeout(() => applyInlineHighlights(currentEntryList), 100);
+    });
+    eventSource.on(event_types.USER_MESSAGE_RENDERED, () => {
+        if (currentEntryList.length) setTimeout(() => applyInlineHighlights(currentEntryList), 100);
+    });
+
+    // ── updatePanel ───────────────────────────────────────────────────────────
+    const updatePanel = (entryList, newChat = false) => {
+        const isGrouped      = extension_settings.worldInfoInfo?.group           ?? true;
+        const isOrdered      = extension_settings.worldInfoInfo?.order           ?? true;
+        const isMes          = extension_settings.worldInfoInfo?.mes             ?? true;
+        const showTokens     = extension_settings.worldInfoInfo?.showTokens      ?? true;
+        const showMatchedKey = extension_settings.worldInfoInfo?.showMatchedKey  ?? true;
+        const doDiff         = extension_settings.worldInfoInfo?.diffHighlight   ?? true;
 
         panel.innerHTML = '';
-        
-        let grouped;
-        if (isGrouped) {
-            grouped = Object.groupBy(entryList, (it)=>it.world);
-        } else {
-            grouped = {'WI Entries': [...entryList]};
-        }
+        let grouped = isGrouped
+            ? Object.groupBy(entryList, it => it.world)
+            : { 'WI Entries': [...entryList] };
+
         const depthPos = [world_info_position.ANBottom, world_info_position.ANTop, world_info_position.atDepth];
-        
-        let totalTokens = 0;
-        
-        for (const [world, entries] of Object.entries(grouped)) {
-            for (const e of entries) {
-                e.depth = e.position == world_info_position.atDepth ? e.depth : (chat_metadata[metadata_keys.depth] + (e.position == world_info_position.ANTop ? 0.1 : 0));
+
+        for (const [world, ents] of Object.entries(grouped)) {
+            for (const e of ents) {
+                e.depth = e.position === world_info_position.atDepth
+                    ? e.depth
+                    : (chat_metadata[metadata_keys.depth] + (e.position === world_info_position.ANTop ? 0.1 : 0));
             }
+
             const w = document.createElement('div');
             w.classList.add('stwii--world');
             w.textContent = world;
             panel.append(w);
-            entries.sort((a,b)=>{
+
+            ents.sort((a, b) => {
                 if (isOrdered) {
                     if (!depthPos.includes(a.position) && !depthPos.includes(b.position)) return a.position - b.position;
-                    if (depthPos.includes(a.position) && !depthPos.includes(b.position)) return 1;
-                    if (!depthPos.includes(a.position) && depthPos.includes(b.position)) return -1;
+                    if ( depthPos.includes(a.position) && !depthPos.includes(b.position)) return 1;
+                    if (!depthPos.includes(a.position) &&  depthPos.includes(b.position)) return -1;
                     if ((a.depth ?? Number.MAX_SAFE_INTEGER) < (b.depth ?? Number.MAX_SAFE_INTEGER)) return 1;
                     if ((a.depth ?? Number.MAX_SAFE_INTEGER) > (b.depth ?? Number.MAX_SAFE_INTEGER)) return -1;
                     if ((a.order ?? Number.MAX_SAFE_INTEGER) > (b.order ?? Number.MAX_SAFE_INTEGER)) return 1;
                     if ((a.order ?? Number.MAX_SAFE_INTEGER) < (b.order ?? Number.MAX_SAFE_INTEGER)) return -1;
-                    return (a.comment ?? a.key.join(', ')).toLowerCase().localeCompare((b.comment ?? b.key.join(', ')).toLowerCase());
-                } else {
-                    return (a.comment?.length ? a.comment : a.key.join(', ')).toLowerCase().localeCompare(b.comment?.length ? b.comment : b.key.join(', '));
                 }
+                return (a.comment?.length ? a.comment : a.key.join(', ')).toLowerCase()
+                    .localeCompare((b.comment?.length ? b.comment : b.key.join(', ')).toLowerCase());
             });
+
             if (!isGrouped && isOrdered && isMes) {
                 const an = chat_metadata[metadata_keys.prompt];
                 const ad = chat_metadata[metadata_keys.depth];
                 if (an?.length) {
-                    const idx = entries.findIndex(e=>depthPos.includes(e.position) && e.depth <= ad);
-                    entries.splice(idx, 0, {type: 'note', position: world_info_position.ANBottom, depth: ad, text: an});
+                    const idx = ents.findIndex(e => depthPos.includes(e.position) && e.depth <= ad);
+                    ents.splice(idx, 0, { type: 'note', position: world_info_position.ANBottom, depth: ad, text: an });
                 }
                 if (newChat) {
                     currentChat = [...chat];
-                    if (generationType == 'swipe') currentChat.pop();
+                    if (generationType === 'swipe') currentChat.pop();
                 }
-                const segmenter = new Intl.Segmenter('en', { granularity:'sentence' });
-                let currentDepth = currentChat.length - 1;
+                const segmenter = new Intl.Segmenter('en', { granularity: 'sentence' });
+                let curDepth = currentChat.length - 1;
                 let isDumped = false;
-                for (let i = entries.length - 1; i >= -1; i--) {
-                    if (i < 0 && currentDepth < 0) continue;
+                for (let i = ents.length - 1; i >= -1; i--) {
+                    if (i < 0 && curDepth < 0) continue;
                     if (isDumped) continue;
-                    if ((i < 0 && currentDepth >= 0) || !depthPos.includes(entries[i].position)) {
+                    if ((i < 0 && curDepth >= 0) || !depthPos.includes(ents[i].position)) {
                         isDumped = true;
                         const depth = -1;
-                        const mesList = currentChat.slice(depth + 1, currentDepth + 1);
-                        const text = mesList.map(it=>it.mes).map(it=>it.replace(/```.+```/gs, '').replace(/<[^>]+?>/g, '').trim()).filter(it=>it.length).join('\n');
-                        const sentences = [...segmenter.segment(text)].map(it=>it.segment.trim());
-                        entries.splice(i + 1, 0, {type: 'mes', count: mesList.length, from: depth + 1, to: currentDepth, first: sentences.at(0), last: sentences.length > 1 ? sentences.at(-1) : null});
-                        currentDepth = -1;
+                        const mesList = currentChat.slice(depth + 1, curDepth + 1);
+                        const text = mesList.map(it => it.mes).map(it => it.replace(/```[\s\S]+?```/g, '').replace(/<[^>]+?>/g, '').trim()).filter(Boolean).join('\n');
+                        const sentences = [...segmenter.segment(text)].map(it => it.segment.trim());
+                        ents.splice(i + 1, 0, { type: 'mes', count: mesList.length, from: depth + 1, to: curDepth, first: sentences.at(0), last: sentences.length > 1 ? sentences.at(-1) : null });
+                        curDepth = -1;
                         continue;
                     }
-                    let depth = Math.max(-1, currentChat.length - entries[i].depth - 1);
-                    if (depth >= currentDepth) continue;
+                    let depth = Math.max(-1, currentChat.length - ents[i].depth - 1);
+                    if (depth >= curDepth) continue;
                     depth = Math.ceil(depth);
-                    if (depth == currentDepth) continue;
-                    const mesList = currentChat.slice(depth + 1, currentDepth + 1);
-                    const text = mesList.map(it=>it.mes).map(it=>it.replace(/```.+```/gs, '').replace(/<[^>]+?>/g, '').trim()).filter(it=>it.length).join('\n');
-                    const sentences = [...segmenter.segment(text)].map(it=>it.segment.trim());
-                    entries.splice(i + 1, 0, {type: 'mes', count: mesList.length, from: depth + 1, to: currentDepth, first: sentences.at(0), last: sentences.length > 1 ? sentences.at(-1) : null});
-                    currentDepth = depth;
+                    if (depth === curDepth) continue;
+                    const mesList = currentChat.slice(depth + 1, curDepth + 1);
+                    const text = mesList.map(it => it.mes).map(it => it.replace(/```[\s\S]+?```/g, '').replace(/<[^>]+?>/g, '').trim()).filter(Boolean).join('\n');
+                    const sentences = [...segmenter.segment(text)].map(it => it.segment.trim());
+                    ents.splice(i + 1, 0, { type: 'mes', count: mesList.length, from: depth + 1, to: curDepth, first: sentences.at(0), last: sentences.length > 1 ? sentences.at(-1) : null });
+                    curDepth = depth;
                 }
             }
-            for (const entry of entries) {
-                const e = document.createElement('div');
-                e.classList.add('stwii--entry');
+
+            for (const entry of ents) {
+                const el = document.createElement('div');
+                el.classList.add('stwii--entry');
+
+                // Broken position check
                 const wipChar = [world_info_position.before, world_info_position.after];
-                const wipEx = [world_info_position.EMTop, world_info_position.EMBottom];
-                if (false && [...wipChar, ...wipEx].includes(entry.position)) {
-                    if (main_api == 'openai') {
-                        const pm = promptManager.getPromptCollection().collection;
-                        if (wipChar.includes(entry.position) && !pm.find(it=>it.identifier == 'charDescription')) {
-                            e.classList.add('stwii--isBroken');
-                            e.title = '⚠️ Not sent because position anchor is missing (Char Description)!\n';
-                        } else if (wipEx.includes(entry.position) && !pm.find(it=>it.identifier == 'dialogueExamples')) {
-                            e.classList.add('stwii--isBroken');
-                            e.title = '⚠️ Not sent because position anchor is missing (Example Messages)!\n';
-                        }
+                const wipEx   = [world_info_position.EMTop, world_info_position.EMBottom];
+                if ([...wipChar, ...wipEx].includes(entry.position) && main_api === 'openai') {
+                    const pm = promptManager.getPromptCollection().collection;
+                    if (wipChar.includes(entry.position) && !pm.find(it => it.identifier === 'charDescription')) {
+                        el.classList.add('stwii--isBroken');
+                        el.title = '⚠️ Not sent — Char Description anchor missing!\n';
+                    } else if (wipEx.includes(entry.position) && !pm.find(it => it.identifier === 'dialogueExamples')) {
+                        el.classList.add('stwii--isBroken');
+                        el.title = '⚠️ Not sent — Example Messages anchor missing!\n';
                     }
-                } else {
-                    e.title = '';
+                } else { el.title = ''; }
+
+                if (entry.type === 'mes')  el.classList.add('stwii--messages');
+                if (entry.type === 'note') el.classList.add('stwii--note');
+
+                // Diff highlight
+                if (doDiff && entry.type === 'wi') {
+                    const id = `${entry.world}§§§${entry.uid}`;
+                    if (!_prevEntryIds.has(id)) el.classList.add('stwii--isNew');
                 }
 
-                if (entry.type == 'mes') e.classList.add('stwii--messages');
-                if (entry.type == 'note') e.classList.add('stwii--note');
-
-                // Disabled state visual
-                const isDisabled = entry.type === 'wi' && disabled.has(entryKey(entry));
-                if (isDisabled) {
-                    e.classList.add('stwii--isDisabled');
-                }
-
+                // Strategy icon
                 const strat = document.createElement('div');
                 strat.classList.add('stwii--strategy');
-                if (entry.type == 'wi') {
-                    strat.textContent = strategy[getStrategy(entry)];
-                } else if (entry.type == 'mes') {
+                if (entry.type === 'wi') {
+                    const s = getStrategy(entry);
+                    strat.textContent = STRATEGIES[s].icon;
+                    strat.title = STRATEGIES[s].label;
+                    strat.dataset.stwiiStrategy = s;
+                } else if (entry.type === 'mes') {
                     strat.classList.add('fa-solid', 'fa-fw', 'fa-comments');
                     strat.setAttribute('data-stwii--count', entry.count.toString());
-                } else if (entry.type == 'note') {
+                } else if (entry.type === 'note') {
                     strat.classList.add('fa-solid', 'fa-fw', 'fa-note-sticky');
                 }
-                e.append(strat);
+                el.append(strat);
+
+                // Title + matched key
+                const titleWrap = document.createElement('div');
+                titleWrap.classList.add('stwii--titleWrap');
 
                 const title = document.createElement('div');
                 title.classList.add('stwii--title');
-                if (entry.type == 'wi') {
+
+                if (entry.type === 'wi') {
                     title.textContent = entry.comment?.length ? entry.comment : entry.key.join(', ');
-                    e.title += `[${entry.world}] ${entry.comment?.length ? entry.comment : entry.key.join(', ')}\n---\n${entry.content}`;
-                } else if (entry.type == 'mes') {
-                    const first = document.createElement('div');
-                    first.classList.add('stwii--first');
-                    first.textContent = entry.first;
+                    el.title += `[${entry.world}] ${entry.comment?.length ? entry.comment : entry.key.join(', ')}\n`;
+                    if (showMatchedKey && entry.matchedKey) {
+                        el.title += `🔑 triggered by: "${entry.matchedKey}"\n`;
+                    }
+                    el.title += `---\n${entry.content}`;
+                } else if (entry.type === 'mes') {
+                    const first = document.createElement('div'); first.classList.add('stwii--first'); first.textContent = entry.first;
                     title.append(first);
                     if (entry.last) {
-                        e.title = `Messages #${entry.from}-${entry.to}\n---\n${entry.first}\n...\n${entry.last}`;
-                        const sep = document.createElement('div');
-                        sep.classList.add('stwii--sep');
-                        sep.textContent = '...';
-                        title.append(sep);
-                        const last = document.createElement('div');
-                        last.classList.add('stwii--last');
-                        last.textContent = entry.last;
-                        title.append(last);
+                        el.title = `Messages #${entry.from}–${entry.to}\n---\n${entry.first}\n...\n${entry.last}`;
+                        const sep = document.createElement('div'); sep.classList.add('stwii--sep'); sep.textContent = '...';
+                        const last = document.createElement('div'); last.classList.add('stwii--last'); last.textContent = entry.last;
+                        title.append(sep, last);
                     } else {
-                        e.title = `Message #${entry.from}\n---\n${entry.first}`;
+                        el.title = `Message #${entry.from}\n---\n${entry.first}`;
                     }
-                } else if (entry.type == 'note') {
+                } else if (entry.type === 'note') {
                     title.textContent = 'Author\'s Note';
-                    e.title = `Author's Note\n---\n${entry.text}`;
+                    el.title = `Author's Note\n---\n${entry.text}`;
                 }
-                e.append(title);
 
-                // Token count badge per entry
+                titleWrap.append(title);
+
+                // Matched key sub-label
+                if (entry.type === 'wi' && showMatchedKey && entry.matchedKey) {
+                    const keyLabel = document.createElement('div');
+                    keyLabel.classList.add('stwii--matchedKey');
+                    keyLabel.textContent = `🔑 ${entry.matchedKey}`;
+                    titleWrap.append(keyLabel);
+                }
+
+                el.append(titleWrap);
+
+                // Token count badge
                 if (entry.type === 'wi' && showTokens) {
-                    const tk = entryTokens(entry);
-                    if (!isDisabled) totalTokens += tk;
-                    const tkEl = document.createElement('div');
-                    tkEl.classList.add('stwii--tokens');
-                    tkEl.textContent = `~${tk}`;
-                    tkEl.title = `~${tk} estimated tokens`;
-                    e.append(tkEl);
+                    const tokBadge = document.createElement('div');
+                    tokBadge.classList.add('stwii--tokens');
+                    tokBadge.textContent = `~${entry.estimatedTokens}t`;
+                    tokBadge.title = `Estimated tokens: ~${entry.estimatedTokens}`;
+                    el.append(tokBadge);
                 }
 
+                // Sticky indicator
                 const sticky = document.createElement('div');
                 sticky.classList.add('stwii--sticky');
                 sticky.textContent = entry.sticky ? `📌 ${entry.sticky}` : '';
                 sticky.title = `Sticky for ${entry.sticky} more rounds`;
-                e.append(sticky);
+                el.append(sticky);
 
-                // Click = toggle disable for WI entries
-                if (entry.type === 'wi') {
-                    e.style.cursor = 'pointer';
-                    e.title = (isDisabled ? '[ОТКЛЮЧЕНА] Клик чтобы включить\n' : '[Клик чтобы отключить]\n') + e.title;
-                    e.addEventListener('click', async (evt)=>{
-                        evt.stopPropagation();
-                        await toggleEntryDisabled(entry);
-                        updatePanel(currentEntryList);
-                    });
-                } else {
-                    e.style.cursor = 'help';
-                }
-
-                panel.append(e);
+                panel.append(el);
             }
         }
 
-        // Token budget bar at the bottom of panel
-        if (showTokens && entryList.some(e=>e.type === 'wi')) {
-            const budgetWrapper = document.createElement('div');
-            budgetWrapper.classList.add('stwii--budget-wrapper');
-
-            const budgetLabel = document.createElement('div');
-            budgetLabel.classList.add('stwii--budget-label');
-            const overBudget = tokenLimit > 0 && totalTokens > tokenLimit;
-            budgetLabel.textContent = tokenLimit > 0
-                ? `~${totalTokens} / ${tokenLimit} tk${overBudget ? ' ⚠️ OVER BUDGET' : ''}`
-                : `~${totalTokens} tk`;
-            if (overBudget) budgetLabel.classList.add('stwii--over-budget');
-            budgetWrapper.append(budgetLabel);
-
-            if (tokenLimit > 0) {
-                const barTrack = document.createElement('div');
-                barTrack.classList.add('stwii--budget-track');
-                const barFill = document.createElement('div');
-                barFill.classList.add('stwii--budget-fill');
-                barFill.style.width = Math.min(100, (totalTokens / tokenLimit) * 100) + '%';
-                if (overBudget) barFill.classList.add('stwii--over-budget');
-                barTrack.append(barFill);
-                budgetWrapper.append(barTrack);
-            }
-
-            panel.append(budgetWrapper);
-        }
-        
-        if (panel.classList.contains('stwii--isActive')) {
-            positionPanel(panel);
-        }
+        if (panel.classList.contains('stwii--isActive')) positionPanel(panel);
     };
 
-    const original_debug = console.debug;
+    // ── Console intercept (0 entries case) ────────────────────────────────────
+    const _origDebug = console.debug;
     console.debug = function(...args) {
-        const triggers = ['[WI] Found 0 world lore entries. Sorted by strategy', '[WI] Adding 0 entries to prompt'];
-        if (triggers.includes(args[0])) {
+        if (['[WI] Found 0 world lore entries. Sorted by strategy', '[WI] Adding 0 entries to prompt'].includes(args[0])) {
             panel.innerHTML = 'No active entries';
-            updateBadge([]);
+            updateBadge([]); clearInlineHighlights();
             currentEntryList = [];
         }
-        return original_debug.bind(console)(...args);
+        return _origDebug.bind(console)(...args);
     };
-    
-    const original_log = console.log;
+    const _origLog = console.log;
     console.log = function(...args) {
-        const triggers = ['[WI] Found 0 world lore entries. Sorted by strategy', '[WI] Adding 0 entries to prompt'];
-        if (triggers.includes(args[0])) {
+        if (['[WI] Found 0 world lore entries. Sorted by strategy', '[WI] Adding 0 entries to prompt'].includes(args[0])) {
             panel.innerHTML = 'No active entries';
-            updateBadge([]);
+            updateBadge([]); clearInlineHighlights();
             currentEntryList = [];
         }
-        return original_log.bind(console)(...args);
+        return _origLog.bind(console)(...args);
     };
 
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({ 
+    // ── Slash command ─────────────────────────────────────────────────────────
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'wi-triggered',
-        callback: (args, value)=>{
-            return JSON.stringify(currentEntryList);
-        },
+        callback: () => JSON.stringify(currentEntryList),
         returns: 'list of triggered WI entries',
         helpString: 'Get the list of World Info entries triggered on the last generation.',
     }));
-    
-    console.log('🟢 [STWII] Расширение полностью загружено!');
+
+    console.log('🟢 [STWII] v2.0 fully loaded!');
 };
 
 init();
