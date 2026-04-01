@@ -1,12 +1,11 @@
-/* ╔══════════════════════════════════════════════════════╗
-   ║  STWII — World Info Info  v3.0  style.css           ║
-   ╚══════════════════════════════════════════════════════╝ */
+/* ═══════════════════════════════════════════════════════════════════
+   STWII v3.0 — style.css  (ПОЛНАЯ ЗАМЕНА старого файла)
+   ═══════════════════════════════════════════════════════════════════ */
 
-/* ── Trigger button ─────────────────────────────────────────────────────────── */
+/* ── Кнопка-иконка ─────────────────────────────────────────────── */
 .stwii--trigger {
     position: fixed;
-    top: 0.5em;
-    left: 0.25em;
+    top: 0.5em; left: 0.25em;
     font-size: 2em;
     opacity: 0.25;
     transition: opacity 200ms;
@@ -19,415 +18,188 @@
     -webkit-user-select: none;
 }
 .stwii--trigger:active { cursor: grabbing; }
-.stwii--trigger:hover  { opacity: 0.85 !important; }
+.stwii--trigger:hover  { opacity: 0.6 !important; }
 
-/* Badge */
-.stwii--trigger:not([data-stwii--badge-count="0"]):hover::after { opacity: 1; }
 .stwii--trigger:not([data-stwii--badge-count="0"])::after {
     content: attr(data-stwii--badge-count);
-    position: absolute;
-    bottom: 0; right: 0;
-    font-size: calc(0.65 * var(--mainFontSize, 13px));
-    font-weight: bold;
-    font-family: var(--mainFontFamily, sans-serif);
-    color: white;
-    background: black;
-    line-height: 1;
-    padding: 0.25em;
-    border-radius: 50%;
-    aspect-ratio: 1 / 1;
-    height: 1lh;
-    text-align: center;
-    pointer-events: none;
-    transition: 200ms;
+    position: absolute; bottom: 0; right: 0;
+    font-size: calc(0.65 * var(--mainFontSize));
+    font-weight: bold; font-family: var(--mainFontFamily);
+    color: white; background: black;
+    line-height: 1; padding: 0.25em;
+    border-radius: 50%; aspect-ratio: 1/1; height: 1lh;
+    text-align: center; pointer-events: none;
+    transition: 200ms; opacity: 0.5;
 }
-.stwii--trigger:not([data-stwii--badge-count="0"]).stwii--badge-in::after     { animation: stwii--badge-popin  0.5s cubic-bezier(0.175,0.885,0.32,1.275); }
-.stwii--trigger:not([data-stwii--badge-count="0"]).stwii--badge-out::after    { animation: stwii--badge-popin  0.5s cubic-bezier(0.175,0.885,0.32,1.275) reverse; }
+.stwii--trigger:not([data-stwii--badge-count="0"]):hover::after { opacity: 1; }
+.stwii--trigger:not([data-stwii--badge-count="0"]).stwii--badge-in::after   { animation: stwii--badge-popin   0.5s cubic-bezier(0.175,0.885,0.32,1.275); }
+.stwii--trigger:not([data-stwii--badge-count="0"]).stwii--badge-out::after  { animation: stwii--badge-popin   0.5s cubic-bezier(0.175,0.885,0.32,1.275) reverse; }
 .stwii--trigger:not([data-stwii--badge-count="0"]).stwii--badge-bounce::after { animation: stwii--badge-bounce 0.5s cubic-bezier(0.175,0.885,0.32,1.275); animation-iteration-count: 2; }
 
-/* ── Panel base ──────────────────────────────────────────────────────────────── */
+/* ── Панель ────────────────────────────────────────────────────── */
 .stwii--panel {
-    filter: drop-shadow(1px 1px 2px rgba(0,0,0,0.5));
+    filter: drop-shadow(1px 1px 2px var(--black50a));
     z-index: 30000;
     overflow: auto;
     border-radius: 10px;
     padding: 0.5em;
     display: none;
     flex-direction: column;
+    gap: 2px;
     font-size: small;
     max-height: 70vh;
     max-width: min(360px, calc(100vw - 20px));
-    min-width: 210px;
-    background-color: var(--secondaryBg, var(--SmartThemeBlurTintColor, rgba(30,30,30,0.97)));
+    min-width: 220px;
+    background-color: var(--secondaryBg, var(--SmartThemeBlurTintColor, rgba(25,25,25,0.97)));
     position: fixed;
     box-sizing: border-box;
-    gap: 0.15em;
 }
 .stwii--panel.stwii--isActive { display: flex; }
 
-/* ── Group header ────────────────────────────────────────────────────────────── */
-.stwii--world {
-    font-weight: bold;
-    padding: 0.25em 0 0.1em 0;
-    margin-top: 0.25em;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
-    font-size: 0.9em;
-    letter-spacing: 0.03em;
-}
+/* ── Загрузка / пусто ──────────────────────────────────────────── */
+.stwii--loading, .stwii--empty { padding: 0.5em; opacity: 0.5; text-align: center; }
 
-/* ── Entry row ───────────────────────────────────────────────────────────────── */
-.stwii--entry {
-    gap: 0.4em;
-    padding: 0.3em 0.4em 0.3em 0.75em;
-    display: flex;
-    align-items: center;
-    opacity: 0.8;
-    cursor: help;
-    transition: opacity 150ms, background 150ms;
-    border-radius: 6px;
-    position: relative;
+/* ── Тулбар ────────────────────────────────────────────────────── */
+.stwii--toolbar {
+    display: flex; gap: 0.4em; padding-bottom: 0.4em;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    flex-wrap: wrap;
 }
-.stwii--entry:hover { opacity: 1; background: rgba(255,255,255,0.05); }
+.stwii--btn-select, .stwii--btn-delete, .stwii--btn-del-book {
+    font-size: 0.75em; padding: 0.2em 0.5em;
+    border-radius: 4px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.06);
+    color: inherit; transition: 150ms;
+}
+.stwii--btn-select:hover  { background: rgba(255,255,255,0.12); }
+.stwii--btn-delete        { background: rgba(220,60,60,0.2); border-color: rgba(220,60,60,0.4); }
+.stwii--btn-delete:hover  { background: rgba(220,60,60,0.35); }
+.stwii--btn-del-book      { font-size: 0.7em; padding: 0.1em 0.3em; opacity: 0.4; margin-left: auto; }
+.stwii--btn-del-book:hover { opacity: 1; background: rgba(220,60,60,0.25); }
+
+/* ── Бюджет токенов ────────────────────────────────────────────── */
+.stwii--budget-wrap { padding: 0.3em 0.2em 0.4em; }
+.stwii--budget-label { font-size: 0.75em; opacity: 0.6; margin-bottom: 0.2em; }
+.stwii--budget-bar-outer {
+    height: 4px; border-radius: 2px;
+    background: rgba(255,255,255,0.1); overflow: hidden;
+}
+.stwii--budget-bar-inner {
+    height: 100%; border-radius: 2px;
+    background: #4a9d6f;
+    transition: width 400ms ease, background 400ms;
+}
+.stwii--budget-bar-inner.stwii--budget-warn { background: #c8932a; }
+.stwii--budget-bar-inner.stwii--budget-crit { background: #c84040; animation: stwii--pulse 1.2s ease infinite; }
+
+@keyframes stwii--pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+
+/* ── Название книги ────────────────────────────────────────────── */
+.stwii--world {
+    font-weight: bold; font-size: 0.8em;
+    padding: 0.3em 0.2em 0.1em;
+    display: flex; align-items: center; gap: 0.3em;
+    border-top: 1px solid rgba(255,255,255,0.07);
+    margin-top: 0.2em;
+}
+.stwii--world:first-of-type { border-top: none; margin-top: 0; }
+
+/* ── Запись ────────────────────────────────────────────────────── */
+.stwii--entry {
+    display: flex; align-items: center; gap: 0.4em;
+    padding: 0.2em 0.2em 0.2em 0.8em;
+    opacity: 0.75; cursor: help; transition: 150ms;
+    border-radius: 4px;
+}
+.stwii--entry:hover { opacity: 1; background: rgba(255,255,255,0.04); }
 .stwii--entry.stwii--isBroken { background: rgba(255,0,0,0.18); }
 
-/* Book color left stripe */
-.stwii--entry.stwii--hasBookColor::before {
-    content: '';
-    position: absolute;
-    left: 0; top: 20%; bottom: 20%;
-    width: 2px;
-    border-radius: 2px;
-    background: var(--stwii-book-color, transparent);
-    opacity: 0.7;
-}
+/* Чекбокс выбора */
+.stwii--select-cb { flex-shrink: 0; cursor: pointer; accent-color: #4a9d6f; }
 
-/* ── Title wrap ──────────────────────────────────────────────────────────────── */
-.stwii--titleWrap {
-    flex: 1 1 auto;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    gap: 0.05em;
-    min-width: 0;
-}
-.stwii--title {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 0.92em;
-}
-.stwii--matchedKey {
-    font-size: 0.7em;
-    opacity: 0.5;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
+/* Иконка стратегии */
+.stwii--strategy { flex-shrink: 0; }
+.stwii--strategy[data-stwii-strategy="constant"]   { color: var(--stwii-c-constant,   #4a90d9); }
+.stwii--strategy[data-stwii-strategy="normal"]     { color: var(--stwii-c-normal,     #2ecc71); }
+.stwii--strategy[data-stwii-strategy="vectorized"] { color: var(--stwii-c-vector,     #9b59b6); }
 
-/* ── Strategy icon ───────────────────────────────────────────────────────────── */
-.stwii--strategy { flex-shrink: 0; font-size: 0.85em; }
+/* Обёртка названия */
+.stwii--titleWrap { flex: 1 1 auto; overflow: hidden; display: flex; flex-direction: column; gap: 0.1em; }
+.stwii--title { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stwii--matchedKey { font-size: 0.7em; opacity: 0.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Правая часть */
+.stwii--right { display: flex; flex-direction: column; align-items: flex-end; gap: 0.15em; flex-shrink: 0; }
+.stwii--tokens { font-size: 0.7em; opacity: 0.4; white-space: nowrap; }
+.stwii--hits   { font-size: 0.7em; opacity: 0.55; white-space: nowrap; color: #f0a030; }
+.stwii--sticky { font-size: 0.7em; white-space: nowrap; }
+
+/* Note / messages строки */
 .stwii--note .stwii--strategy::before { opacity: 0.5; }
-.stwii--messages .stwii--strategy {
-    position: relative;
-}
+.stwii--messages .stwii--strategy { position: relative; }
 .stwii--messages .stwii--strategy::after {
     content: attr(data-stwii--count);
-    font-family: var(--mainFontFamily, sans-serif);
-    position: absolute;
-    inset: 0;
+    font-family: var(--mainFontFamily);
+    position: absolute; inset: 0;
     text-shadow: -1px -1px 1px black, 1px 1px 1px black, -1px 1px 1px black, 1px -1px 1px black;
-    font-size: 0.75em;
-    padding-top: 0.25em;
+    font-size: 0.75em; padding-top: 0.25em;
 }
 .stwii--messages .stwii--strategy::before { opacity: 0.5; }
-.stwii--messages .stwii--title {
-    flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
-    font-size: 0.5em;
-    width: 0;
-    white-space: normal;
-}
-.stwii--messages .stwii--title .stwii--first,
-.stwii--messages .stwii--title .stwii--last {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.stwii--messages .stwii--title .stwii--sep {
-    opacity: 0.75;
-    flex: 0 0 auto;
-    line-height: 0.125em;
-    padding-bottom: 0.6em;
-}
+.stwii--messages .stwii--title { flex: 1 1 auto; display: flex; flex-direction: column; font-size: 0.5em; width: 0; white-space: normal; }
+.stwii--first, .stwii--last  { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stwii--sep { opacity: 0.75; flex: 0 0 auto; line-height: 0.125em; padding-bottom: 0.6em; }
 
-/* ── Right-side badges ───────────────────────────────────────────────────────── */
-.stwii--badges {
-    display: flex;
-    gap: 0.25em;
-    align-items: center;
-    flex-shrink: 0;
-}
-.stwii--tokens {
-    font-size: 0.68em;
-    opacity: 0.4;
-    white-space: nowrap;
-}
-.stwii--hitBadge {
-    font-size: 0.68em;
-    opacity: 0.6;
-    white-space: nowrap;
-    background: rgba(255,255,255,0.1);
-    border-radius: 4px;
-    padding: 0.1em 0.3em;
-}
-.stwii--sticky { flex-shrink: 0; font-size: 0.78em; }
+/* ── Строка конфига ─────────────────────────────────────────────── */
+.stwii--configRow { display: flex; align-items: center; gap: 1em; padding: 0.5em; cursor: pointer; opacity: 0.5; transition: 200ms; border-radius: 4px; }
+.stwii--configRow:hover { opacity: 1; background: rgba(255,255,255,0.04); }
 
-/* ── Quick action buttons ────────────────────────────────────────────────────── */
-.stwii--quickActions {
-    display: none;
-    gap: 0.2em;
-    flex-shrink: 0;
-}
-.stwii--entry:hover .stwii--quickActions { display: flex; }
-.stwii--qaBtn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 0.1em 0.2em;
-    font-size: 0.8em;
-    opacity: 0.6;
-    border-radius: 4px;
-    transition: opacity 150ms, background 150ms;
-    line-height: 1;
-}
-.stwii--qaBtn:hover { opacity: 1; background: rgba(255,255,255,0.12); }
+/* ── Diff — новые записи ───────────────────────────────────────── */
+@keyframes stwii--newEntry { 0%{background:rgba(46,204,113,0.30)} 100%{background:transparent} }
+.stwii--isNew { animation: stwii--newEntry 2.5s ease-out forwards; border-radius: 4px; }
 
-/* ── Search bar ──────────────────────────────────────────────────────────────── */
-.stwii--searchWrap { padding: 0.2em 0; }
-.stwii--search {
-    width: 100%;
-    background: rgba(255,255,255,0.07);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 6px;
-    padding: 0.3em 0.5em;
-    font-size: 0.85em;
-    color: inherit;
-    outline: none;
-    box-sizing: border-box;
-    transition: border-color 150ms;
-}
-.stwii--search:focus { border-color: rgba(255,255,255,0.3); }
-.stwii--search::placeholder { opacity: 0.4; }
-
-/* ── Token budget bar ────────────────────────────────────────────────────────── */
-.stwii--budgetWrap {
-    padding: 0.2em 0.2em 0.4em;
-    display: flex;
-    flex-direction: column;
-    gap: 0.2em;
-}
-.stwii--budgetLabel {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.72em;
-    opacity: 0.6;
-}
-.stwii--budgetPct { font-weight: bold; }
-.stwii--budgetPct.stwii--budgetOver { color: #ff6b6b; opacity: 1; }
-.stwii--budgetBar {
-    height: 4px;
-    background: rgba(255,255,255,0.1);
-    border-radius: 2px;
-    overflow: hidden;
-}
-.stwii--budgetFill {
-    height: 100%;
-    background: var(--color-primary, #4f98a3);
-    border-radius: 2px;
-    transition: width 400ms ease, background 400ms;
-    min-width: 2px;
-}
-.stwii--budgetFill.stwii--budgetOver { background: #ff6b6b; }
-
-/* ── Panel utility buttons (history / export) ─────────────────────────────────── */
-.stwii--panelBtns {
-    display: flex;
-    gap: 0.3em;
-    padding: 0.1em 0;
-}
-.stwii--panelBtn {
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 6px;
-    padding: 0.2em 0.5em;
-    font-size: 0.8em;
-    cursor: pointer;
-    color: inherit;
-    opacity: 0.6;
-    transition: opacity 150ms, background 150ms;
-}
-.stwii--panelBtn:hover { opacity: 1; background: rgba(255,255,255,0.12); }
-
-/* ── Config panel ────────────────────────────────────────────────────────────── */
-.stwii--configPanel { min-width: 230px; }
-.stwii--configRow {
-    display: flex;
-    align-items: center;
-    gap: 0.8em;
-    padding: 0.4em 0.5em;
-    cursor: pointer;
-    opacity: 0.55;
-    transition: opacity 150ms;
-    border-radius: 6px;
-    font-size: 0.88em;
-}
-.stwii--configRow:hover { opacity: 1; background: rgba(255,255,255,0.05); }
-.stwii--cfgSep {
-    font-size: 0.7em;
-    opacity: 0.35;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 0.5em 0.5em 0.1em;
-    margin-top: 0.2em;
-}
-.stwii--budgetRow { cursor: default; gap: 0.5em; justify-content: space-between; }
-.stwii--budgetInput {
-    width: 80px;
-    background: rgba(255,255,255,0.07);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 5px;
-    padding: 0.2em 0.4em;
-    color: inherit;
-    font-size: 0.85em;
-    text-align: right;
-    outline: none;
-}
-.stwii--histBtn {
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 6px;
-    padding: 0.4em 0.6em;
-    cursor: pointer;
-    color: inherit;
-    width: 100%;
-    text-align: left;
-    font-size: 0.85em;
-    opacity: 0.6;
-    transition: opacity 150ms, background 150ms;
-    margin-top: 0.2em;
-}
-.stwii--histBtn:hover { opacity: 1; background: rgba(255,255,255,0.1); }
-
-/* ── History panel ───────────────────────────────────────────────────────────── */
-.stwii--historyPanel { min-width: 240px; max-height: 60vh; }
-.stwii--histRow {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3em 0.5em;
-    padding: 0.35em 0.5em;
-    border-radius: 6px;
-    font-size: 0.8em;
-    transition: background 150ms;
-    align-items: center;
-}
-.stwii--histRow:hover { background: rgba(255,255,255,0.05); }
-.stwii--histTime    { opacity: 0.45; flex-shrink: 0; }
-.stwii--histCount   { font-weight: bold; flex-shrink: 0; }
-.stwii--histAdded   { color: #6daa45; font-size: 0.9em; }
-.stwii--histRemoved { color: #dd6974; font-size: 0.9em; }
-
-/* ── Inline keyword highlights in chat ───────────────────────────────────────── */
+/* ── Inline подсветка в чате ───────────────────────────────────── */
 .stwii--highlight {
     cursor: pointer;
-    border-bottom: 1.5px dashed var(--stwii-hl-color, #4f98a3);
-    color: var(--stwii-hl-color, inherit);
-    opacity: 0.9;
-    transition: background 150ms, opacity 150ms;
-}
-.stwii--highlight:hover { opacity: 1; background: rgba(255,255,255,0.07); }
-
-/* Reverse highlight — flashed from panel hover */
-@keyframes stwii--reverseFlash {
-    0%   { background: rgba(255,255,255,0.22); }
-    100% { background: transparent; }
-}
-.stwii--hl-reverse {
-    animation: stwii--reverseFlash 1.2s ease-out forwards;
-    border-bottom-style: solid;
-}
-
-/* ── Inline tooltip ──────────────────────────────────────────────────────────── */
-.stwii--inline-tooltip {
-    position: fixed;
-    z-index: 50000;
-    max-width: min(330px, calc(100vw - 20px));
-    background: var(--secondaryBg, rgba(20,20,20,0.98));
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 9px;
-    padding: 0.65em 0.85em;
-    font-size: small;
-    display: none;
-    flex-direction: column;
-    gap: 0.3em;
-    filter: drop-shadow(0 4px 16px rgba(0,0,0,0.55));
-    pointer-events: auto;
-}
-.stwii--inline-tooltip.stwii--isActive { display: flex; }
-.stwii--tt-header {
-    display: flex;
-    align-items: center;
-    gap: 0.4em;
-    font-weight: bold;
-}
-.stwii--tt-title  { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stwii--tt-tokens { flex-shrink: 0; opacity: 0.45; font-size: 0.82em; font-weight: normal; }
-.stwii--tt-meta   { display: flex; gap: 0.6em; opacity: 0.6; font-size: 0.82em; flex-wrap: wrap; }
-.stwii--tt-key em { font-style: normal; font-weight: bold; }
-.stwii--tt-hits   { opacity: 0.55; }
-.stwii--tt-content {
-    font-size: 0.82em;
-    opacity: 0.7;
-    max-height: 9em;
-    overflow: hidden;
-    white-space: pre-wrap;
-    word-break: break-word;
-    border-top: 1px solid rgba(255,255,255,0.08);
-    padding-top: 0.4em;
-    margin-top: 0.1em;
-}
-.stwii--tt-actions { display: flex; gap: 0.4em; margin-top: 0.2em; }
-.stwii--tt-btn {
-    background: rgba(255,255,255,0.08);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 5px;
-    padding: 0.2em 0.6em;
-    font-size: 0.8em;
-    cursor: pointer;
-    color: inherit;
+    border-bottom: 1.5px dashed currentColor;
     transition: background 150ms;
 }
-.stwii--tt-btn:hover { background: rgba(255,255,255,0.16); }
+.stwii--highlight:hover { background: rgba(255,255,255,0.08); }
+.stwii--highlight[data-stwii-strategy="constant"]   { color: var(--stwii-c-constant,   #4a90d9); }
+.stwii--highlight[data-stwii-strategy="normal"]     { color: var(--stwii-c-normal,     #2ecc71); }
+.stwii--highlight[data-stwii-strategy="vectorized"] { color: var(--stwii-c-vector,     #9b59b6); }
 
-/* ── Diff — new entry flash ──────────────────────────────────────────────────── */
-@keyframes stwii--newEntry {
-    0%   { background: rgba(109,170,69,0.3); }
-    100% { background: transparent; }
+/* ── Inline тултип ─────────────────────────────────────────────── */
+.stwii--inline-tooltip {
+    position: fixed; z-index: 50000;
+    max-width: min(320px, calc(100vw - 20px));
+    background: var(--secondaryBg, rgba(18,18,18,0.97));
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px; padding: 0.6em 0.8em;
+    font-size: small; display: none; flex-direction: column; gap: 0.3em;
+    filter: drop-shadow(0 4px 12px rgba(0,0,0,0.55));
 }
-.stwii--isNew { animation: stwii--newEntry 2.5s ease-out forwards; }
+.stwii--inline-tooltip.stwii--isActive { display: flex; }
+.stwii--tt-header { display: flex; align-items: center; gap: 0.4em; font-weight: bold; }
+.stwii--tt-title  { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stwii--tt-tokens { flex-shrink: 0; opacity: 0.45; font-size: 0.85em; font-weight: normal; }
+.stwii--tt-meta   { display: flex; gap: 0.6em; opacity: 0.6; font-size: 0.82em; flex-wrap: wrap; }
+.stwii--tt-key em { font-style: normal; font-weight: bold; }
+.stwii--tt-hits   { color: #f0a030; }
+.stwii--tt-content { font-size: 0.82em; opacity: 0.72; max-height: 8em; overflow: hidden; white-space: pre-wrap; word-break: break-word; }
 
-/* ── Badge animations ────────────────────────────────────────────────────────── */
+/* ── Анимации бейджа ───────────────────────────────────────────── */
 @keyframes stwii--badge-popin {
-    0%   { transform: scale(0);   opacity: 0; }
+    0%   { transform: scale(0); opacity: 0; }
     48%  { transform: scale(1.2); opacity: 1; }
-    80%  { transform: scale(1);   opacity: 1; }
-    100% { transform: scale(1);   opacity: 0.5; }
+    80%  { transform: scale(1); opacity: 1; }
+    100% { transform: scale(1); opacity: 0.5; }
 }
 @keyframes stwii--badge-bounce {
     0%   { opacity: 0.5; transform: scale(1) translateY(0); }
-    10%  { opacity: 1;   transform: scale(1.1, .9) translateY(0); }
-    30%  { opacity: 1;   transform: scale(.9, 1.1) translateY(-.5em); }
-    50%  { opacity: 1;   transform: scale(1.05, .95) translateY(0); }
+    10%  { opacity: 1;   transform: scale(1.1,.9) translateY(0); }
+    30%  { opacity: 1;   transform: scale(.9,1.1) translateY(-.5em); }
+    50%  { opacity: 1;   transform: scale(1.05,.95) translateY(0); }
     57%  { opacity: 1;   transform: scale(1) translateY(-.125em); }
     64%  { opacity: 1;   transform: scale(1) translateY(0); }
     90%  { opacity: 1;   transform: scale(1) translateY(0); }
