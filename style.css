@@ -1,8 +1,9 @@
-/* ═══════════════════════════════════════════════════════════════════
-   STWII v3.0 — style.css  (ПОЛНАЯ ЗАМЕНА старого файла)
-   ═══════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════
+   STWII v3.0 — FULL STYLESHEET
+   Заменяет оба предыдущих файла style.css + дополнения
+   ══════════════════════════════════════════════════ */
 
-/* ── Кнопка-иконка ─────────────────────────────────────────────── */
+/* ─── Иконка-триггер ────────────────────────────────────── */
 .stwii--trigger {
     position: fixed;
     top: 0.5em; left: 0.25em;
@@ -18,13 +19,14 @@
     -webkit-user-select: none;
 }
 .stwii--trigger:active { cursor: grabbing; }
-.stwii--trigger:hover  { opacity: 0.6 !important; }
+.stwii--trigger:hover  { opacity: 0.85 !important; }
 
 .stwii--trigger:not([data-stwii--badge-count="0"])::after {
     content: attr(data-stwii--badge-count);
     position: absolute; bottom: 0; right: 0;
     font-size: calc(0.65 * var(--mainFontSize));
-    font-weight: bold; font-family: var(--mainFontFamily);
+    font-weight: bold;
+    font-family: var(--mainFontFamily);
     color: white; background: black;
     line-height: 1; padding: 0.25em;
     border-radius: 50%; aspect-ratio: 1/1; height: 1lh;
@@ -32,176 +34,357 @@
     transition: 200ms; opacity: 0.5;
 }
 .stwii--trigger:not([data-stwii--badge-count="0"]):hover::after { opacity: 1; }
-.stwii--trigger:not([data-stwii--badge-count="0"]).stwii--badge-in::after   { animation: stwii--badge-popin   0.5s cubic-bezier(0.175,0.885,0.32,1.275); }
-.stwii--trigger:not([data-stwii--badge-count="0"]).stwii--badge-out::after  { animation: stwii--badge-popin   0.5s cubic-bezier(0.175,0.885,0.32,1.275) reverse; }
-.stwii--trigger:not([data-stwii--badge-count="0"]).stwii--badge-bounce::after { animation: stwii--badge-bounce 0.5s cubic-bezier(0.175,0.885,0.32,1.275); animation-iteration-count: 2; }
+.stwii--trigger.stwii--badge-in::after    { animation: stwii--badge-popin   0.5s cubic-bezier(0.175,0.885,0.32,1.275); }
+.stwii--trigger.stwii--badge-out::after   { animation: stwii--badge-popin   0.5s cubic-bezier(0.175,0.885,0.32,1.275) reverse; }
+.stwii--trigger.stwii--badge-bounce::after{ animation: stwii--badge-bounce  0.5s cubic-bezier(0.175,0.885,0.32,1.275); animation-iteration-count:2; }
 
-/* ── Панель ────────────────────────────────────────────────────── */
+/* ─── Панель ─────────────────────────────────────────────── */
 .stwii--panel {
     filter: drop-shadow(1px 1px 2px var(--black50a));
     z-index: 30000;
-    overflow: auto;
+    overflow: hidden;
     border-radius: 10px;
-    padding: 0.5em;
     display: none;
     flex-direction: column;
-    gap: 2px;
     font-size: small;
-    max-height: 70vh;
-    max-width: min(360px, calc(100vw - 20px));
+    max-height: 75vh;
+    max-width: min(380px, calc(100vw - 20px));
     min-width: 220px;
     background-color: var(--secondaryBg, var(--SmartThemeBlurTintColor, rgba(25,25,25,0.97)));
     position: fixed;
     box-sizing: border-box;
+    border: 1px solid rgba(255,255,255,0.08);
 }
 .stwii--panel.stwii--isActive { display: flex; }
 
-/* ── Загрузка / пусто ──────────────────────────────────────────── */
-.stwii--loading, .stwii--empty { padding: 0.5em; opacity: 0.5; text-align: center; }
+/* ─── Главная панель (с вкладками) ──────────────────────── */
+.stwii--mainPanel { padding: 0; }
 
-/* ── Тулбар ────────────────────────────────────────────────────── */
-.stwii--toolbar {
-    display: flex; gap: 0.4em; padding-bottom: 0.4em;
+/* ─── Таб-бар ────────────────────────────────────────────── */
+.stwii--tabBar {
+    display: flex;
     border-bottom: 1px solid rgba(255,255,255,0.08);
-    flex-wrap: wrap;
+    flex-shrink: 0;
 }
-.stwii--btn-select, .stwii--btn-delete, .stwii--btn-del-book {
-    font-size: 0.75em; padding: 0.2em 0.5em;
-    border-radius: 4px; cursor: pointer;
-    border: 1px solid rgba(255,255,255,0.15);
-    background: rgba(255,255,255,0.06);
-    color: inherit; transition: 150ms;
+.stwii--tab {
+    flex: 1;
+    padding: 0.45em 0.3em;
+    font-size: 0.78em;
+    opacity: 0.5;
+    cursor: pointer;
+    background: none; border: none;
+    color: inherit;
+    transition: opacity 150ms, background 150ms;
+    white-space: nowrap;
 }
-.stwii--btn-select:hover  { background: rgba(255,255,255,0.12); }
-.stwii--btn-delete        { background: rgba(220,60,60,0.2); border-color: rgba(220,60,60,0.4); }
-.stwii--btn-delete:hover  { background: rgba(220,60,60,0.35); }
-.stwii--btn-del-book      { font-size: 0.7em; padding: 0.1em 0.3em; opacity: 0.4; margin-left: auto; }
-.stwii--btn-del-book:hover { opacity: 1; background: rgba(220,60,60,0.25); }
+.stwii--tab:hover { opacity: 0.85; background: rgba(255,255,255,0.04); }
+.stwii--tab.stwii--tab-active { opacity: 1; border-bottom: 2px solid var(--SmartThemeQuoteColor, #4fa); }
 
-/* ── Бюджет токенов ────────────────────────────────────────────── */
-.stwii--budget-wrap { padding: 0.3em 0.2em 0.4em; }
-.stwii--budget-label { font-size: 0.75em; opacity: 0.6; margin-bottom: 0.2em; }
-.stwii--budget-bar-outer {
-    height: 4px; border-radius: 2px;
-    background: rgba(255,255,255,0.1); overflow: hidden;
+/* ─── Содержимое вкладок ─────────────────────────────────── */
+.stwii--tabContent {
+    overflow-y: auto;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    padding: 0.4em 0.4em 0.5em;
+    gap: 0.25em;
 }
-.stwii--budget-bar-inner {
-    height: 100%; border-radius: 2px;
-    background: #4a9d6f;
+
+/* ─── Поиск ──────────────────────────────────────────────── */
+.stwii--search {
+    width: 100%;
+    padding: 0.3em 0.5em;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.06);
+    color: inherit;
+    font-size: 0.85em;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    margin-bottom: 0.2em;
+}
+.stwii--search:focus { outline: 1px solid rgba(255,255,255,0.25); }
+
+/* ─── Token budget bar ───────────────────────────────────── */
+.stwii--budgetWrap {
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+    flex-shrink: 0;
+    margin-bottom: 0.25em;
+}
+.stwii--budgetBar {
+    flex: 1;
+    height: 5px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.1);
+    overflow: hidden;
+}
+.stwii--budgetFill {
+    height: 100%;
+    border-radius: 3px;
+    background: var(--SmartThemeQuoteColor, #4fa);
     transition: width 400ms ease, background 400ms;
 }
-.stwii--budget-bar-inner.stwii--budget-warn { background: #c8932a; }
-.stwii--budget-bar-inner.stwii--budget-crit { background: #c84040; animation: stwii--pulse 1.2s ease infinite; }
+.stwii--budgetFill.stwii--budget-warn { background: #e67e22; }
+.stwii--budgetFill.stwii--budget-crit { background: #e74c3c; animation: stwii--pulse 1s ease infinite; }
+.stwii--budgetLabel {
+    font-size: 0.7em;
+    opacity: 0.55;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
 
-@keyframes stwii--pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+/* ─── Контейнер записей ──────────────────────────────────── */
+.stwii--entriesContainer {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15em;
+}
+.stwii--empty {
+    opacity: 0.4;
+    text-align: center;
+    padding: 1em;
+    font-size: 0.85em;
+}
 
-/* ── Название книги ────────────────────────────────────────────── */
+/* ─── Заголовок книги ────────────────────────────────────── */
 .stwii--world {
-    font-weight: bold; font-size: 0.8em;
-    padding: 0.3em 0.2em 0.1em;
-    display: flex; align-items: center; gap: 0.3em;
-    border-top: 1px solid rgba(255,255,255,0.07);
-    margin-top: 0.2em;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+    padding: 0.2em 0 0.1em 0;
+    font-size: 0.9em;
+    margin-top: 0.25em;
 }
-.stwii--world:first-of-type { border-top: none; margin-top: 0; }
+.stwii--worldDot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: inline-block;
+}
+.stwii--groupTokens {
+    margin-left: auto;
+    font-size: 0.72em;
+    opacity: 0.4;
+    font-weight: normal;
+}
 
-/* ── Запись ────────────────────────────────────────────────────── */
+/* ─── Строка записи ──────────────────────────────────────── */
 .stwii--entry {
-    display: flex; align-items: center; gap: 0.4em;
-    padding: 0.2em 0.2em 0.2em 0.8em;
-    opacity: 0.75; cursor: help; transition: 150ms;
-    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+    padding: 0.25em 0.35em;
+    border-radius: 5px;
+    cursor: help;
+    transition: background 150ms;
+    position: relative;
+    overflow: hidden;
 }
-.stwii--entry:hover { opacity: 1; background: rgba(255,255,255,0.04); }
+.stwii--entry:hover { background: rgba(255,255,255,0.06); }
 .stwii--entry.stwii--isBroken { background: rgba(255,0,0,0.18); }
+.stwii--entry.stwii--compact  { padding: 0.15em 0.3em; }
 
-/* Чекбокс выбора */
-.stwii--select-cb { flex-shrink: 0; cursor: pointer; accent-color: #4a9d6f; }
-
-/* Иконка стратегии */
-.stwii--strategy { flex-shrink: 0; }
-.stwii--strategy[data-stwii-strategy="constant"]   { color: var(--stwii-c-constant,   #4a90d9); }
-.stwii--strategy[data-stwii-strategy="normal"]     { color: var(--stwii-c-normal,     #2ecc71); }
-.stwii--strategy[data-stwii-strategy="vectorized"] { color: var(--stwii-c-vector,     #9b59b6); }
-
-/* Обёртка названия */
-.stwii--titleWrap { flex: 1 1 auto; overflow: hidden; display: flex; flex-direction: column; gap: 0.1em; }
-.stwii--title { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stwii--matchedKey { font-size: 0.7em; opacity: 0.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* Правая часть */
-.stwii--right { display: flex; flex-direction: column; align-items: flex-end; gap: 0.15em; flex-shrink: 0; }
-.stwii--tokens { font-size: 0.7em; opacity: 0.4; white-space: nowrap; }
-.stwii--hits   { font-size: 0.7em; opacity: 0.55; white-space: nowrap; color: #f0a030; }
-.stwii--sticky { font-size: 0.7em; white-space: nowrap; }
-
-/* Note / messages строки */
-.stwii--note .stwii--strategy::before { opacity: 0.5; }
-.stwii--messages .stwii--strategy { position: relative; }
-.stwii--messages .stwii--strategy::after {
-    content: attr(data-stwii--count);
-    font-family: var(--mainFontFamily);
-    position: absolute; inset: 0;
-    text-shadow: -1px -1px 1px black, 1px 1px 1px black, -1px 1px 1px black, 1px -1px 1px black;
-    font-size: 0.75em; padding-top: 0.25em;
+/* Цветная полоска слева (по книге) */
+.stwii--colorStrip {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    border-radius: 3px 0 0 3px;
 }
-.stwii--messages .stwii--strategy::before { opacity: 0.5; }
-.stwii--messages .stwii--title { flex: 1 1 auto; display: flex; flex-direction: column; font-size: 0.5em; width: 0; white-space: normal; }
-.stwii--first, .stwii--last  { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.stwii--sep { opacity: 0.75; flex: 0 0 auto; line-height: 0.125em; padding-bottom: 0.6em; }
 
-/* ── Строка конфига ─────────────────────────────────────────────── */
-.stwii--configRow { display: flex; align-items: center; gap: 1em; padding: 0.5em; cursor: pointer; opacity: 0.5; transition: 200ms; border-radius: 4px; }
+/* ─── Стратегия / иконка ─────────────────────────────────── */
+.stwii--strategy { flex-shrink: 0; font-size: 1em; }
+
+/* ─── Текстовая часть ────────────────────────────────────── */
+.stwii--titleWrap {
+    flex: 1 1 auto;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 0.05em;
+    padding-left: 0.15em;
+}
+.stwii--title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.92em;
+}
+.stwii--matchedKey {
+    font-size: 0.7em;
+    opacity: 0.5;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ─── Правая часть: токены, хиты, sticky ────────────────── */
+.stwii--tokens { font-size: 0.7em; opacity: 0.4; flex-shrink: 0; }
+.stwii--hits   { font-size: 0.7em; opacity: 0.55; flex-shrink: 0; color: var(--SmartThemeQuoteColor, #4fa); }
+.stwii--sticky { font-size: 0.75em; flex-shrink: 0; }
+
+/* ─── Кнопки действий ────────────────────────────────────── */
+.stwii--actions { display: flex; gap: 0.2em; flex-shrink: 0; }
+.stwii--actionBtn {
+    background: none; border: none; cursor: pointer;
+    font-size: 0.9em; opacity: 0.35;
+    padding: 0.1em; border-radius: 3px;
+    transition: opacity 150ms, background 150ms;
+    line-height: 1;
+}
+.stwii--actionBtn:hover { opacity: 1; background: rgba(255,255,255,0.1); }
+
+/* ─── Diff-анимация ──────────────────────────────────────── */
+@keyframes stwii--newEntry {
+    0%   { background: rgba(79,255,170,0.25); }
+    100% { background: transparent; }
+}
+.stwii--isNew { animation: stwii--newEntry 2.5s ease-out forwards; }
+
+/* ─── Вкладка: Лорбуки ───────────────────────────────────── */
+.stwii--bookRow {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    padding: 0.35em 0.4em;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 150ms;
+}
+.stwii--bookRow:hover { background: rgba(255,255,255,0.06); }
+.stwii--bookCheck { cursor: pointer; accent-color: var(--SmartThemeQuoteColor, #4fa); }
+.stwii--bookName  { flex: 1; font-size: 0.9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stwii--bookMeta  { font-size: 0.72em; opacity: 0.45; flex-shrink: 0; }
+.stwii--detachBtn {
+    margin-top: 0.5em;
+    width: 100%;
+    padding: 0.4em 0.6em;
+    border-radius: 6px;
+    border: 1px solid rgba(231,76,60,0.4);
+    background: rgba(231,76,60,0.12);
+    color: #e74c3c;
+    cursor: pointer;
+    font-size: 0.82em;
+    transition: background 150ms, opacity 150ms;
+}
+.stwii--detachBtn:hover:not(:disabled) { background: rgba(231,76,60,0.25); }
+.stwii--detachBtn:disabled { opacity: 0.35; cursor: default; }
+
+/* ─── Вкладка: История ───────────────────────────────────── */
+.stwii--histBlock {
+    border-left: 2px solid rgba(255,255,255,0.1);
+    padding: 0.2em 0.5em;
+    margin-bottom: 0.4em;
+}
+.stwii--histHeader { font-size: 0.78em; opacity: 0.55; margin-bottom: 0.2em; }
+.stwii--histDiffs  { display: flex; flex-direction: column; gap: 0.1em; }
+.stwii--histAdded   { font-size: 0.8em; color: #2ecc71; }
+.stwii--histRemoved { font-size: 0.8em; color: #e74c3c; }
+.stwii--histSame    { font-size: 0.78em; opacity: 0.35; }
+
+/* ─── Конфиг-панель ──────────────────────────────────────── */
+.stwii--cfgTitle {
+    font-weight: bold;
+    padding: 0.5em 0.6em 0.3em;
+    font-size: 0.9em;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    flex-shrink: 0;
+}
+.stwii--configRow {
+    display: flex;
+    align-items: center;
+    gap: 0.75em;
+    padding: 0.4em 0.6em;
+    cursor: pointer;
+    opacity: 0.55;
+    transition: opacity 150ms, background 150ms;
+    font-size: 0.88em;
+}
 .stwii--configRow:hover { opacity: 1; background: rgba(255,255,255,0.04); }
+.stwii--cfgCtxRow {
+    gap: 0.4em;
+    flex-wrap: wrap;
+    cursor: default;
+    font-size: 0.82em;
+}
+.stwii--ctxInput {
+    width: 80px;
+    padding: 0.2em 0.4em;
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.07);
+    color: inherit;
+    font-size: 0.9em;
+}
 
-/* ── Diff — новые записи ───────────────────────────────────────── */
-@keyframes stwii--newEntry { 0%{background:rgba(46,204,113,0.30)} 100%{background:transparent} }
-.stwii--isNew { animation: stwii--newEntry 2.5s ease-out forwards; border-radius: 4px; }
-
-/* ── Inline подсветка в чате ───────────────────────────────────── */
+/* ─── Инлайн-подсветка в чате ───────────────────────────── */
 .stwii--highlight {
     cursor: pointer;
     border-bottom: 1.5px dashed currentColor;
-    transition: background 150ms;
+    transition: background 120ms;
+    border-radius: 2px;
 }
-.stwii--highlight:hover { background: rgba(255,255,255,0.08); }
-.stwii--highlight[data-stwii-strategy="constant"]   { color: var(--stwii-c-constant,   #4a90d9); }
-.stwii--highlight[data-stwii-strategy="normal"]     { color: var(--stwii-c-normal,     #2ecc71); }
-.stwii--highlight[data-stwii-strategy="vectorized"] { color: var(--stwii-c-vector,     #9b59b6); }
+.stwii--highlight:hover,
+.stwii--highlight.stwii--highlight-active {
+    background: rgba(255,255,255,0.1);
+}
+.stwii--highlight[data-stwii-strategy="constant"]   { color: #4a90d9; }
+.stwii--highlight[data-stwii-strategy="normal"]     { color: #2ecc71; }
+.stwii--highlight[data-stwii-strategy="vectorized"] { color: #9b59b6; }
 
-/* ── Inline тултип ─────────────────────────────────────────────── */
+/* ─── Инлайн тултип ─────────────────────────────────────── */
 .stwii--inline-tooltip {
-    position: fixed; z-index: 50000;
+    position: fixed;
+    z-index: 50000;
     max-width: min(320px, calc(100vw - 20px));
-    background: var(--secondaryBg, rgba(18,18,18,0.97));
+    background: var(--secondaryBg, rgba(18,18,18,0.98));
     border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 8px; padding: 0.6em 0.8em;
-    font-size: small; display: none; flex-direction: column; gap: 0.3em;
-    filter: drop-shadow(0 4px 12px rgba(0,0,0,0.55));
+    border-radius: 8px;
+    padding: 0.6em 0.8em;
+    font-size: small;
+    display: none;
+    flex-direction: column;
+    gap: 0.3em;
+    filter: drop-shadow(0 4px 16px rgba(0,0,0,0.55));
 }
 .stwii--inline-tooltip.stwii--isActive { display: flex; }
-.stwii--tt-header { display: flex; align-items: center; gap: 0.4em; font-weight: bold; }
-.stwii--tt-title  { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stwii--tt-tokens { flex-shrink: 0; opacity: 0.45; font-size: 0.85em; font-weight: normal; }
-.stwii--tt-meta   { display: flex; gap: 0.6em; opacity: 0.6; font-size: 0.82em; flex-wrap: wrap; }
-.stwii--tt-key em { font-style: normal; font-weight: bold; }
-.stwii--tt-hits   { color: #f0a030; }
-.stwii--tt-content { font-size: 0.82em; opacity: 0.72; max-height: 8em; overflow: hidden; white-space: pre-wrap; word-break: break-word; }
+.stwii--tt-header {
+    display: flex; align-items: center; gap: 0.4em; font-weight: bold;
+}
+.stwii--tt-title   { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stwii--tt-tokens  { flex-shrink: 0; opacity: 0.45; font-size: 0.82em; font-weight: normal; }
+.stwii--tt-meta    { display: flex; gap: 0.6em; opacity: 0.6; font-size: 0.8em; flex-wrap: wrap; }
+.stwii--tt-key em  { font-style: normal; font-weight: bold; }
+.stwii--tt-hits    { opacity: 0.55; }
+.stwii--tt-content {
+    font-size: 0.82em; opacity: 0.7;
+    max-height: 9em; overflow: hidden;
+    white-space: pre-wrap; word-break: break-word;
+    border-top: 1px solid rgba(255,255,255,0.07);
+    padding-top: 0.3em;
+}
 
-/* ── Анимации бейджа ───────────────────────────────────────────── */
+/* ─── Анимации ───────────────────────────────────────────── */
 @keyframes stwii--badge-popin {
-    0%   { transform: scale(0); opacity: 0; }
-    48%  { transform: scale(1.2); opacity: 1; }
-    80%  { transform: scale(1); opacity: 1; }
-    100% { transform: scale(1); opacity: 0.5; }
+    0%  { transform: scale(0); opacity: 0; }
+    48% { transform: scale(1.2); opacity: 1; }
+    80% { transform: scale(1); opacity: 1; }
+    100%{ transform: scale(1); opacity: 0.5; }
 }
 @keyframes stwii--badge-bounce {
-    0%   { opacity: 0.5; transform: scale(1) translateY(0); }
-    10%  { opacity: 1;   transform: scale(1.1,.9) translateY(0); }
-    30%  { opacity: 1;   transform: scale(.9,1.1) translateY(-.5em); }
-    50%  { opacity: 1;   transform: scale(1.05,.95) translateY(0); }
-    57%  { opacity: 1;   transform: scale(1) translateY(-.125em); }
-    64%  { opacity: 1;   transform: scale(1) translateY(0); }
-    90%  { opacity: 1;   transform: scale(1) translateY(0); }
-    100% { opacity: 0.5; transform: scale(1) translateY(0); }
+    0%  { opacity:.5; transform:scale(1) translateY(0); }
+    10% { opacity:1;  transform:scale(1.1,.9) translateY(0); }
+    30% { opacity:1;  transform:scale(.9,1.1) translateY(-.5em); }
+    50% { opacity:1;  transform:scale(1.05,.95) translateY(0); }
+    57% { opacity:1;  transform:scale(1) translateY(-.125em); }
+    64% { opacity:1;  transform:scale(1) translateY(0); }
+    90% { opacity:1;  transform:scale(1) translateY(0); }
+    100%{ opacity:.5; transform:scale(1) translateY(0); }
+}
+@keyframes stwii--pulse {
+    0%,100% { opacity:1; }
+    50%      { opacity:0.5; }
 }
