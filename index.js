@@ -5,7 +5,7 @@ import { promptManager } from '../../../openai.js';
 import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
 import { delay } from '../../../utils.js';
-import { world_info_position } from '../../../world-info.js';
+import { world_info_position, loadWorldInfo, saveWorldInfo } from '../../../world-info.js';
 
 console.log('🟢 [STWII] World Info Info v3.0 — загрузка...');
 
@@ -179,30 +179,87 @@ const _collapsedGroups = new Set();
 
 // ─── Jump to WI entry ────────────────────────────────────────────────────────────
 const jumpToEntry = async (entry) => {
-    const btn = document.querySelector('#WIEntriesButEdit, .drawer-toggle[data-target="world_info_drawer"], [data-drawer="world_info"]');
-    if (btn) btn.click();
-    await delay(350);
-    const sel = document.querySelector('#world_editor_select');
-    if (sel) {
-        const opt = [...sel.options].find(o => o.value === entry.world || o.textContent.trim() === entry.world);
-        if (opt) { sel.value = opt.value; sel.dispatchEvent(new Event('change')); await delay(250); }
-    }
-    const searchEl = document.querySelector('#world_info_search');
-    if (searchEl) {
-        searchEl.value = entry.comment?.length ? entry.comment : (entry.key?.[0] || '');
-        searchEl.dispatchEvent(new Event('input'));
+    try {
+        // ── Step 1: open the World Info panel ───────────────────────────────
+        // ST uses #world_info_button in the extensions/character panel sidebar
+        const wiBtn = document.querySelector('#world_info_button')
+            ?? document.querySelector('[data-i18n="World Info"]')
+            ?? document.querySelector('[title="World Info"]')
+            ?? document.querySelector('.drawer-toggle[data-target="world_info"]');
+        if (wiBtn) {
+            // Make sure the panel is actually visible (click only if collapsed)
+            const targetId = wiBtn.dataset?.target || 'world_info';
+            const drawerContent = document.getElementById(targetId)
+                ?? document.querySelector(`[id="${targetId}"]`);
+            const isHidden = drawerContent
+                ? (drawerContent.style.display === 'none' || drawerContent.hidden)
+                : false;
+            if (isHidden || !drawerContent) wiBtn.click();
+            await delay(400);
+        }
+
+        // ── Step 2: select the correct book ─────────────────────────────────
+        const sel = document.querySelector('#world_editor_select');
+        if (sel) {
+            const opt = [...sel.options].find(
+                o => o.value === entry.world || o.textContent.trim() === entry.world
+            );
+            if (opt && sel.value !== opt.value) {
+                sel.value = opt.value;
+                sel.dispatchEvent(new Event('change'));
+                await delay(350);
+            }
+        }
+
+        // ── Step 3: filter entries by name ───────────────────────────────────
+        const needle = entry.comment?.length ? entry.comment : (entry.key?.[0] ?? '');
+        // Try the search/filter field (newer ST)
+        const searchEl = document.querySelector('#world_info_search')
+            ?? document.querySelector('.world_entry_search')
+            ?? document.querySelector('input[placeholder*="earch" i][id*="world" i]');
+        if (searchEl && needle) {
+            searchEl.value = needle;
+            searchEl.dispatchEvent(new Event('input'));
+            await delay(200);
+        }
+
+        // ── Step 4: scroll to and briefly flash the matching entry row ───────
+        await delay(150);
+        const allRows = document.querySelectorAll('.world_entry, .worldInfoEntry, [id^="world_entry_"]');
+        for (const row of allRows) {
+            const commentEl = row.querySelector('.world_entry_comment, [name="comment"], .comment');
+            const text = commentEl?.value ?? commentEl?.textContent ?? '';
+            if (text.trim() === needle.trim()) {
+                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                row.style.outline = '2px solid var(--SmartThemeQuoteColor, #4fa)';
+                row.style.transition = 'outline 600ms';
+                setTimeout(() => { row.style.outline = ''; }, 1800);
+                break;
+            }
+        }
+    } catch(err) {
+        console.warn('[STWII] jumpToEntry failed:', err);
     }
 };
+
 
 // ─── Быстрый тогл записи ──────────────────────────────────────────────────────
 const toggleEntry = async (entry) => {
     try {
-        await SlashCommandParser.commands['wi-enabled']?.callback(
-            { file: entry.world, _scope: null, _abortController: null },
-            String(entry.uid),
-        );
-    } catch(e) {
-        console.warn('[STWII] toggleEntry error:', e);
+        // Load lorebook data, toggle disable flag, save back
+        const data = await loadWorldInfo(entry.world);
+        if (!data?.entries) throw new Error('entries not found in lorebook');
+        const wiEntry = Object.values(data.entries).find(e => e.uid === entry.uid);
+        if (!wiEntry) throw new Error(`uid ${entry.uid} not found`);
+        wiEntry.disable = !wiEntry.disable;
+        await saveWorldInfo(entry.world, data, /* silent */ true);
+        // Mirror change in local copy so button reflects state
+        entry.disable = wiEntry.disable;
+        const name = wiEntry.comment?.length ? wiEntry.comment : (wiEntry.key?.[0] ?? String(entry.uid));
+        toastr?.info(`${wiEntry.disable ? '⏸ Отключена' : '▶ Включена'}: ${name}`);
+    } catch(err) {
+        console.warn('[STWII] toggleEntry failed:', err);
+        toastr?.warning('[STWII] Не удалось переключить запись: ' + err.message);
     }
 };
 
@@ -635,13 +692,15 @@ const init = () => {
                 // ⏸ Quick toggle (enable/disable entry without opening lorebook)
                 const toggleBtn = document.createElement('button');
                 toggleBtn.classList.add('stwii--actionBtn');
-                toggleBtn.textContent = '⏸';
-                toggleBtn.title = 'Включить / выключить запись';
+                toggleBtn.textContent = entry.disable ? '▶' : '⏸';
+                toggleBtn.title = entry.disable ? 'Включить запись' : 'Отключить запись';
+                toggleBtn.style.opacity = entry.disable ? '0.8' : '';
                 toggleBtn.addEventListener('click', async (e) => {
                     e.stopPropagation();
                     toggleBtn.textContent = '⏳';
                     await toggleEntry(entry);
-                    toggleBtn.textContent = '⏸';
+                    toggleBtn.textContent = entry.disable ? '▶' : '⏸';
+                    toggleBtn.title = entry.disable ? 'Включить запись' : 'Отключить запись';
                 });
 
                 // 🔗 Jump to entry in lorebook editor
@@ -939,7 +998,6 @@ const init = () => {
         returns: 'суммарные токены активных WI записей',
         helpString: 'Вернуть суммарную оценку токенов активных WI записей.',
     }));
-
     console.log('🟢 [STWII] v3.0 загружено!');
 };
 
