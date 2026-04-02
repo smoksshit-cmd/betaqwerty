@@ -1,567 +1,269 @@
-/* ╔══════════════════════════════════════════════════════════╗
-   ║  STWII — World Info Info  v3.1  style.css  (full clean) ║
-   ╚══════════════════════════════════════════════════════════╝ */
+/* ═══════════════════════════════════════════════════
+   Avatar Gallery — style.css
+   ═══════════════════════════════════════════════════ */
 
-/* ═══════════════════════════════════════════════════════════
-   TRIGGER BUTTON
-   ═══════════════════════════════════════════════════════════ */
-.stwii--trigger {
+/* ── Модальный оверлей ─────────────────────────────────────────── */
+.avga-modal {
     position: fixed;
-    top: 0.5em; left: 0.25em;
-    font-size: 2em;
-    opacity: 0.25;
-    transition: opacity 200ms;
-    cursor: grab;
-    z-index: 3010;
-    filter: drop-shadow(2px 4px 6px black);
-    display: block;
-    touch-action: none;
-    user-select: none;
-    -webkit-user-select: none;
-}
-.stwii--trigger:active { cursor: grabbing; }
-.stwii--trigger:hover  { opacity: 0.85 !important; }
-
-/* Badge */
-.stwii--trigger:not([data-stwii--badge-count="0"])::after {
-    content: attr(data-stwii--badge-count);
-    position: absolute; bottom: 0; right: 0;
-    font-size: calc(0.65 * var(--mainFontSize, 13px));
-    font-weight: bold;
-    font-family: var(--mainFontFamily, sans-serif);
-    color: white; background: black;
-    line-height: 1; padding: 0.25em;
-    border-radius: 50%; aspect-ratio: 1/1; height: 1lh;
-    text-align: center; pointer-events: none;
-    transition: 200ms; opacity: 0.5;
-}
-.stwii--trigger:not([data-stwii--badge-count="0"]):hover::after { opacity: 1; }
-.stwii--trigger.stwii--badge-in::after     { animation: stwii--badge-popin   0.5s cubic-bezier(0.175,0.885,0.32,1.275); }
-.stwii--trigger.stwii--badge-out::after    { animation: stwii--badge-popin   0.5s cubic-bezier(0.175,0.885,0.32,1.275) reverse; }
-.stwii--trigger.stwii--badge-bounce::after { animation: stwii--badge-bounce  0.5s cubic-bezier(0.175,0.885,0.32,1.275); animation-iteration-count: 2; }
-
-/* ═══════════════════════════════════════════════════════════
-   PANEL BASE
-   ═══════════════════════════════════════════════════════════ */
-.stwii--panel {
-    position: fixed;
-    z-index: 30000;
+    inset: 0;
+    z-index: 60000;
+    background: rgba(0, 0, 0, 0.78);
     display: none;
-    flex-direction: column;
-    border-radius: 10px;
-    overflow: hidden;
-    font-size: small;
-    max-height: 75vh;
-    max-width: min(380px, calc(100vw - 20px));
-    min-width: 220px;
-    box-sizing: border-box;
-    background-color: var(--secondaryBg, var(--SmartThemeBlurTintColor, rgba(25,25,25,0.97)));
-    border: 1px solid rgba(255,255,255,0.08);
-    filter: drop-shadow(1px 1px 4px rgba(0,0,0,0.6));
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
 }
-.stwii--panel.stwii--isActive { display: flex; }
+.avga-modal.avga-open { display: flex; }
 
-/* Main panel (tabs layout) */
-.stwii--mainPanel { padding: 0; }
-
-/* ═══════════════════════════════════════════════════════════
-   TAB BAR
-   ═══════════════════════════════════════════════════════════ */
-.stwii--tabBar {
-    display: flex;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-    flex-shrink: 0;
-}
-.stwii--tab {
-    flex: 1;
-    padding: 0.45em 0.3em;
-    font-size: 0.78em;
-    opacity: 0.5;
-    cursor: pointer;
-    background: none; border: none;
-    color: inherit;
-    transition: opacity 150ms, background 150ms;
-    white-space: nowrap;
-}
-.stwii--tab:hover { opacity: 0.85; background: rgba(255,255,255,0.04); }
-.stwii--tab.stwii--tab-active {
-    opacity: 1;
-    border-bottom: 2px solid var(--SmartThemeQuoteColor, #4fa);
-}
-
-/* Tab content areas */
-.stwii--tabContent {
-    overflow-y: auto;
-    flex: 1 1 auto;
+/* ── Окно галереи ──────────────────────────────────────────────── */
+.avga-box {
+    background: var(--bg1color, #1e1e1e);
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    border-radius: 14px;
+    padding: 1.25em 1.4em 1.4em;
+    max-width: 540px;
+    width: calc(100vw - 32px);
+    max-height: 85vh;
     display: flex;
     flex-direction: column;
-    padding: 0.4em 0.4em 0.5em;
-    gap: 0.2em;
-    min-height: 0;
-}
-
-/* ═══════════════════════════════════════════════════════════
-   SEARCH BAR
-   ═══════════════════════════════════════════════════════════ */
-.stwii--search {
-    width: 100%;
-    padding: 0.3em 0.5em;
-    border-radius: 6px;
-    border: 1px solid rgba(255,255,255,0.12);
-    background: rgba(255,255,255,0.06);
-    color: inherit;
-    font-size: 0.85em;
-    flex-shrink: 0;
-    box-sizing: border-box;
-    outline: none;
-    transition: border-color 150ms;
-}
-.stwii--search:focus    { border-color: rgba(255,255,255,0.28); }
-.stwii--search::placeholder { opacity: 0.4; }
-
-/* ═══════════════════════════════════════════════════════════
-   TOKEN BUDGET BAR
-   ═══════════════════════════════════════════════════════════ */
-.stwii--budgetWrap {
-    display: flex;
-    align-items: center;
-    gap: 0.4em;
-    flex-shrink: 0;
-    padding: 0.1em 0 0.15em;
-}
-.stwii--budgetBar {
-    flex: 1;
-    height: 4px;
-    border-radius: 3px;
-    background: rgba(255,255,255,0.1);
-    overflow: hidden;
-}
-.stwii--budgetFill {
-    height: 100%;
-    border-radius: 3px;
-    background: var(--SmartThemeQuoteColor, #4fa);
-    transition: width 400ms ease, background 400ms;
-    min-width: 2px;
-}
-.stwii--budgetFill.stwii--budget-warn { background: #e67e22; }
-.stwii--budgetFill.stwii--budget-crit {
-    background: #e74c3c;
-    animation: stwii--pulse 1s ease infinite;
-}
-.stwii--budgetLabel {
-    font-size: 0.68em;
-    opacity: 0.5;
-    white-space: nowrap;
-    flex-shrink: 0;
-}
-
-/* ═══════════════════════════════════════════════════════════
-   ENTRIES CONTAINER
-   ═══════════════════════════════════════════════════════════ */
-.stwii--entriesContainer {
-    display: flex;
-    flex-direction: column;
-    gap: 0.1em;
-    overflow-y: auto;
-    flex: 1 1 auto;
-    min-height: 0;
-    padding: 0.2em 0;
-}
-.stwii--empty {
-    opacity: 0.4;
-    text-align: center;
-    padding: 1.5em 1em;
-    font-size: 0.85em;
-}
-
-/* ═══════════════════════════════════════════════════════════
-   GROUP HEADER (collapsible)
-   ═══════════════════════════════════════════════════════════ */
-.stwii--world {
-    display: flex;
-    align-items: center;
-    gap: 0.4em;
-    padding: 0.25em 0.35em 0.15em;
-    margin-top: 0.3em;
-    font-weight: bold;
-    font-size: 0.88em;
-    cursor: pointer;
-    user-select: none;
-    -webkit-user-select: none;
-    border-bottom: 1px solid rgba(255,255,255,0.07);
-    border-radius: 4px 4px 0 0;
-    transition: background 150ms;
-}
-.stwii--world:hover { background: rgba(255,255,255,0.04); }
-
-.stwii--worldDot {
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    display: inline-block;
-}
-.stwii--groupTokens {
-    font-size: 0.7em;
-    opacity: 0.38;
-    font-weight: normal;
-    margin-left: auto;
-    margin-right: 0.15em;
-}
-.stwii--chevron {
-    font-size: 0.72em;
-    opacity: 0.5;
-    flex-shrink: 0;
-    transition: transform 200ms;
-    line-height: 1;
-}
-
-/* Group container */
-.stwii--groupContainer {
-    display: flex;
-    flex-direction: column;
-    gap: 0.06em;
-    padding-bottom: 0.1em;
-}
-.stwii--groupContainer.stwii--collapsed { display: none; }
-
-/* ═══════════════════════════════════════════════════════════
-   ENTRY ROW
-   ═══════════════════════════════════════════════════════════ */
-.stwii--entry {
-    display: flex;
-    align-items: center;
-    gap: 0.35em;
-    padding: 0.22em 0.4em 0.22em 0.65em;
-    border-radius: 5px;
-    cursor: help;
-    transition: background 150ms;
-    position: relative;
-    overflow: visible;
-}
-.stwii--entry:hover { background: rgba(255,255,255,0.055); }
-.stwii--entry.stwii--isBroken { background: rgba(255,0,0,0.18); }
-
-/* Book color left strip */
-.stwii--colorStrip {
-    position: absolute;
-    left: 0; top: 15%; bottom: 15%;
-    width: 2.5px;
-    border-radius: 2px;
-}
-
-/* ── Strategy icon ──────────────────────────────────────────── */
-.stwii--strategy { flex-shrink: 0; font-size: 0.95em; line-height: 1; }
-
-/* ── Title + triggered key ──────────────────────────────────── */
-.stwii--titleWrap {
-    flex: 1 1 auto;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    gap: 0.04em;
-    min-width: 0;
-}
-.stwii--title {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 0.91em;
-}
-.stwii--matchedKey {
-    font-size: 0.7em;
-    opacity: 0.48;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-/* ── Right side badges ──────────────────────────────────────── */
-.stwii--tokens {
-    font-size: 0.68em;
-    opacity: 0.38;
-    flex-shrink: 0;
-    white-space: nowrap;
-}
-.stwii--hits {
-    font-size: 0.68em;
-    opacity: 0.55;
-    flex-shrink: 0;
-    color: var(--SmartThemeQuoteColor, #4fa);
-    white-space: nowrap;
-}
-.stwii--sticky {
-    font-size: 0.72em;
-    flex-shrink: 0;
-}
-
-/* ── NEW badge ──────────────────────────────────────────────── */
-.stwii--newBadge {
-    display: inline-flex;
-    align-items: center;
-    font-size: 0.58em;
-    font-weight: 800;
-    letter-spacing: 0.07em;
-    background: #6daa45;
-    color: #fff;
-    border-radius: 3px;
-    padding: 0.15em 0.4em;
-    flex-shrink: 0;
-    line-height: 1.3;
-    animation: stwii--newBadgePop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
-}
-
-/* ── Action buttons (visible on hover) ─────────────────────── */
-.stwii--actions {
-    display: none;
-    gap: 0.15em;
-    flex-shrink: 0;
-}
-.stwii--entry:hover .stwii--actions { display: flex; }
-.stwii--actionBtn {
-    background: none; border: none;
-    cursor: pointer;
-    font-size: 0.85em;
-    opacity: 0.4;
-    padding: 0.1em 0.15em;
-    border-radius: 3px;
-    transition: opacity 150ms, background 150ms;
-    line-height: 1;
-    color: inherit;
-}
-.stwii--actionBtn:hover { opacity: 1; background: rgba(255,255,255,0.12); }
-
-/* ═══════════════════════════════════════════════════════════
-   COMPACT MODE
-   ═══════════════════════════════════════════════════════════ */
-.stwii--entry.stwii--compact {
-    padding: 0.1em 0.35em 0.1em 0.55em;
-}
-.stwii--entry.stwii--compact .stwii--title       { font-size: 0.84em; }
-.stwii--entry.stwii--compact .stwii--matchedKey,
-.stwii--entry.stwii--compact .stwii--tokens,
-.stwii--entry.stwii--compact .stwii--hits,
-.stwii--entry.stwii--compact .stwii--sticky,
-.stwii--entry.stwii--compact .stwii--newBadge    { display: none; }
-.stwii--entry.stwii--compact .stwii--strategy    { font-size: 0.8em; }
-.stwii--entry.stwii--compact .stwii--actions     { display: none; }
-.stwii--entry.stwii--compact:hover .stwii--actions { display: flex; }
-
-/* ═══════════════════════════════════════════════════════════
-   LOREBOOKS TAB
-   ═══════════════════════════════════════════════════════════ */
-.stwii--bookRow {
-    display: flex;
-    align-items: center;
-    gap: 0.5em;
-    padding: 0.32em 0.4em;
-    border-radius: 5px;
-    cursor: pointer;
-    transition: background 150ms;
-}
-.stwii--bookRow:hover { background: rgba(255,255,255,0.06); }
-.stwii--bookCheck {
-    cursor: pointer;
-    accent-color: var(--SmartThemeQuoteColor, #4fa);
-    flex-shrink: 0;
-}
-.stwii--bookName {
-    flex: 1;
-    font-size: 0.9em;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.stwii--bookMeta {
-    font-size: 0.7em;
-    opacity: 0.42;
-    flex-shrink: 0;
-}
-.stwii--detachBtn {
-    margin-top: 0.4em;
-    width: 100%;
-    padding: 0.38em 0.6em;
-    border-radius: 6px;
-    border: 1px solid rgba(231,76,60,0.4);
-    background: rgba(231,76,60,0.1);
-    color: #e74c3c;
-    cursor: pointer;
-    font-size: 0.82em;
-    transition: background 150ms, opacity 150ms;
-}
-.stwii--detachBtn:hover:not(:disabled) { background: rgba(231,76,60,0.25); }
-.stwii--detachBtn:disabled             { opacity: 0.35; cursor: default; }
-
-/* ═══════════════════════════════════════════════════════════
-   HISTORY TAB
-   ═══════════════════════════════════════════════════════════ */
-.stwii--histBlock {
-    border-left: 2px solid rgba(255,255,255,0.1);
-    padding: 0.25em 0.5em;
-    margin-bottom: 0.35em;
-}
-.stwii--histHeader {
-    font-size: 0.76em;
-    opacity: 0.5;
-    margin-bottom: 0.15em;
-}
-.stwii--histDiffs  { display: flex; flex-direction: column; gap: 0.08em; }
-.stwii--histAdded   { font-size: 0.8em; color: #6daa45; }
-.stwii--histRemoved { font-size: 0.8em; color: #e74c3c; }
-.stwii--histSame    { font-size: 0.76em; opacity: 0.3; }
-
-/* ═══════════════════════════════════════════════════════════
-   CONFIG PANEL
-   ═══════════════════════════════════════════════════════════ */
-.stwii--cfgTitle {
-    font-weight: bold;
-    padding: 0.5em 0.6em 0.3em;
-    font-size: 0.88em;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-    flex-shrink: 0;
-}
-.stwii--configRow {
-    display: flex;
-    align-items: center;
     gap: 0.75em;
-    padding: 0.38em 0.6em;
-    cursor: pointer;
-    opacity: 0.55;
-    transition: opacity 150ms, background 150ms;
-    font-size: 0.87em;
-    border-radius: 5px;
-    margin: 0 0.2em;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.7);
+    animation: avga-boxIn 0.2s ease-out;
 }
-.stwii--configRow:hover { opacity: 1; background: rgba(255,255,255,0.05); }
-.stwii--cfgCtxRow {
-    gap: 0.4em;
-    flex-wrap: wrap;
-    cursor: default;
-    font-size: 0.82em;
+@keyframes avga-boxIn {
+    from { transform: scale(0.93) translateY(12px); opacity: 0; }
+    to   { transform: scale(1)    translateY(0);    opacity: 1; }
 }
-.stwii--ctxInput {
-    width: 80px;
-    padding: 0.2em 0.4em;
-    border-radius: 4px;
-    border: 1px solid rgba(255,255,255,0.15);
-    background: rgba(255,255,255,0.07);
+
+/* ── Шапка ─────────────────────────────────────────────────────── */
+.avga-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5em;
+    flex-shrink: 0;
+}
+.avga-title {
+    font-weight: 700;
+    font-size: 1em;
+    color: var(--SmartThemeBodyColor, #d0d0d0);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.avga-close {
+    background: none;
+    border: none;
     color: inherit;
-    font-size: 0.9em;
-    outline: none;
-    text-align: right;
-}
-
-/* ═══════════════════════════════════════════════════════════
-   INLINE KEYWORD HIGHLIGHTS IN CHAT
-   ═══════════════════════════════════════════════════════════ */
-.stwii--highlight {
+    opacity: 0.45;
     cursor: pointer;
-    border-bottom: 1.5px dashed currentColor;
-    transition: background 130ms;
-    border-radius: 2px;
-    opacity: 0.9;
+    font-size: 1.1em;
+    padding: 0.2em 0.4em;
+    border-radius: 5px;
+    transition: opacity 150ms, background 150ms;
+    flex-shrink: 0;
+    line-height: 1;
 }
-.stwii--highlight:hover,
-.stwii--highlight.stwii--highlight-active {
-    background: rgba(255,255,255,0.1);
-    opacity: 1;
-}
-.stwii--highlight[data-stwii-strategy="constant"]   { color: #4a90d9; }
-.stwii--highlight[data-stwii-strategy="normal"]     { color: #6daa45; }
-.stwii--highlight[data-stwii-strategy="vectorized"] { color: #9b59b6; }
+.avga-close:hover { opacity: 1; background: rgba(255, 255, 255, 0.08); }
 
-/* ═══════════════════════════════════════════════════════════
-   INLINE TOOLTIP
-   ═══════════════════════════════════════════════════════════ */
-.stwii--inline-tooltip {
-    position: fixed;
-    z-index: 50000;
-    max-width: min(320px, calc(100vw - 20px));
-    background: var(--secondaryBg, rgba(18,18,18,0.98));
-    border: 1px solid rgba(255,255,255,0.1);
+/* ── Подсказка ─────────────────────────────────────────────────── */
+.avga-hint {
+    font-size: 0.78em;
+    opacity: 0.42;
+    margin: 0;
+    flex-shrink: 0;
+}
+
+/* ── Сетка превью ──────────────────────────────────────────────── */
+.avga-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 0.55em;
+    overflow-y: auto;
+    max-height: 58vh;
+    padding: 0.15em 0.1em;
+    flex: 1 1 auto;
+}
+
+/* ── Ячейка ────────────────────────────────────────────────────── */
+.avga-cell {
+    position: relative;
+    aspect-ratio: 1 / 1;
     border-radius: 9px;
-    padding: 0.6em 0.8em;
-    font-size: small;
-    display: none;
-    flex-direction: column;
-    gap: 0.3em;
-    filter: drop-shadow(0 4px 18px rgba(0,0,0,0.6));
-    pointer-events: auto;
+    overflow: hidden;
+    cursor: pointer;
+    border: 2px solid transparent;
+    background: rgba(255, 255, 255, 0.05);
+    transition: transform 150ms, border-color 150ms, box-shadow 150ms;
 }
-.stwii--inline-tooltip.stwii--isActive { display: flex; }
+.avga-cell:hover { transform: scale(1.04); }
 
-.stwii--tt-header {
+.avga-cell.avga-active {
+    border-color: var(--SmartThemeQuoteColor, #4fdb9a);
+    box-shadow: 0 0 0 3px oklch(from var(--SmartThemeQuoteColor, #4fdb9a) l c h / 0.28);
+}
+
+.avga-cell img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    pointer-events: none;
+}
+
+/* ── Бейдж «Активный» ──────────────────────────────────────────── */
+.avga-badge {
+    position: absolute;
+    bottom: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.68);
+    color: var(--SmartThemeQuoteColor, #4fdb9a);
+    font-size: 0.62em;
+    font-weight: 600;
+    white-space: nowrap;
+    padding: 0.15em 0.45em;
+    border-radius: 20px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 150ms;
+}
+.avga-cell:hover .avga-badge,
+.avga-cell.avga-active .avga-badge { opacity: 1; }
+
+/* ── Кнопка удаления на ячейке ──────────────────────────────────── */
+.avga-del {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 22px;
+    height: 22px;
+    background: rgba(0, 0, 0, 0.72);
+    color: #ff7070;
+    border: none;
+    border-radius: 50%;
+    font-size: 1em;
+    line-height: 1;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    transition: background 150ms;
+    padding: 0;
+}
+.avga-cell:hover .avga-del { display: flex; }
+.avga-del:hover { background: rgba(200, 40, 40, 0.85); color: #fff; }
+
+/* ── Ячейка «Добавить» ─────────────────────────────────────────── */
+.avga-add {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25em;
+    border: 2px dashed rgba(255, 255, 255, 0.18);
+    opacity: 0.4;
+    transition: opacity 150ms, border-color 150ms;
+    background: none;
+}
+.avga-add:hover { opacity: 0.85; border-color: rgba(255, 255, 255, 0.4); transform: none; }
+.avga-add span { font-size: 2em; line-height: 1; }
+.avga-add small { font-size: 0.7em; }
+
+/* ═══════════════════════════════════════════════════
+   ZOOM NAVIGATION BAR
+   ═══════════════════════════════════════════════════ */
+.avga-zoom-nav {
+    position: absolute;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
     display: flex;
     align-items: center;
     gap: 0.4em;
-    font-weight: bold;
-    font-size: 0.95em;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 24px;
+    padding: 0.3em 0.7em;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    z-index: 100;
+    white-space: nowrap;
+    user-select: none;
+    -webkit-user-select: none;
+    animation: avga-navIn 0.25s ease-out;
 }
-.stwii--tt-icon    { flex-shrink: 0; }
-.stwii--tt-title   { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stwii--tt-tokens  { flex-shrink: 0; opacity: 0.42; font-size: 0.8em; font-weight: normal; }
-
-.stwii--tt-meta {
-    display: flex;
-    gap: 0.55em;
-    opacity: 0.6;
-    font-size: 0.8em;
-    flex-wrap: wrap;
-}
-.stwii--tt-world  { font-weight: bold; }
-.stwii--tt-key em { font-style: normal; font-weight: bold; }
-.stwii--tt-hits   { opacity: 0.55; }
-
-.stwii--tt-content {
-    font-size: 0.8em;
-    opacity: 0.68;
-    max-height: 9em;
-    overflow: hidden;
-    white-space: pre-wrap;
-    word-break: break-word;
-    border-top: 1px solid rgba(255,255,255,0.08);
-    padding-top: 0.35em;
-    margin-top: 0.05em;
+@keyframes avga-navIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   ANIMATIONS
-   ═══════════════════════════════════════════════════════════ */
-/* Diff: new entry flash */
-@keyframes stwii--newEntry {
-    0%   { background: rgba(79,255,170,0.22); }
-    100% { background: transparent; }
+.avga-zb {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 1.35em;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0.05em 0.25em;
+    border-radius: 50%;
+    transition: background 130ms, color 130ms;
 }
-.stwii--isNew { animation: stwii--newEntry 2.5s ease-out forwards; }
+.avga-zb:hover { background: rgba(255, 255, 255, 0.15); color: #fff; }
+.avga-zb.avga-gal { font-size: 0.95em; opacity: 0.75; }
+.avga-zb.avga-gal:hover { opacity: 1; }
 
-/* NEW badge pop */
-@keyframes stwii--newBadgePop {
-    0%   { transform: scale(0); opacity: 0; }
-    55%  { transform: scale(1.18); opacity: 1; }
-    100% { transform: scale(1); opacity: 1; }
-}
-
-/* Budget bar pulse */
-@keyframes stwii--pulse {
-    0%, 100% { opacity: 1; }
-    50%       { opacity: 0.45; }
-}
-
-/* Badge pop-in / pop-out */
-@keyframes stwii--badge-popin {
-    0%   { transform: scale(0);   opacity: 0; }
-    48%  { transform: scale(1.2); opacity: 1; }
-    80%  { transform: scale(1);   opacity: 1; }
-    100% { transform: scale(1);   opacity: 0.5; }
+.avga-counter {
+    font-size: 0.78em;
+    color: rgba(255, 255, 255, 0.65);
+    min-width: 2.8em;
+    text-align: center;
 }
 
-/* Badge bounce */
-@keyframes stwii--badge-bounce {
-    0%   { opacity: 0.5; transform: scale(1)    translateY(0); }
-    10%  { opacity: 1;   transform: scale(1.1,.9) translateY(0); }
-    30%  { opacity: 1;   transform: scale(.9,1.1) translateY(-.5em); }
-    50%  { opacity: 1;   transform: scale(1.05,.95) translateY(0); }
-    57%  { opacity: 1;   transform: scale(1)    translateY(-.125em); }
-    64%  { opacity: 1;   transform: scale(1)    translateY(0); }
-    90%  { opacity: 1;   transform: scale(1)    translateY(0); }
-    100% { opacity: 0.5; transform: scale(1)    translateY(0); }
+/* ═══════════════════════════════════════════════════
+   INJECT BUTTONS (🖼 рядом с аватаркой)
+   ═══════════════════════════════════════════════════ */
+.avga-btn {
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: 6px;
+    padding: 0.25em 0.45em;
+    cursor: pointer;
+    font-size: 0.9em;
+    line-height: 1;
+    color: inherit;
+    transition: background 150ms, opacity 150ms;
+    opacity: 0.7;
+    vertical-align: middle;
 }
+.avga-btn:hover { background: rgba(255, 255, 255, 0.16); opacity: 1; }
+
+/* Компактная версия для списка персон */
+.avga-btn-sm {
+    padding: 0.15em 0.3em;
+    font-size: 0.78em;
+    border-radius: 4px;
+    opacity: 0.5;
+}
+.avga-btn-sm:hover { opacity: 1; }
+
+/* ── Адаптив для мобильных ─────────────────────────────────────── */
+@media (max-width: 480px) {
+    .avga-box {
+        padding: 1em;
+        border-radius: 10px;
+    }
+    .avga-grid {
+        grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+    }
+    .avga-zoom-nav {
+        padding: 0.25em 0.5em;
+        bottom: 8px;
+    }
+}
+
+/* prev / next наследуют от avga-zb — дополнительных стилей не требуется,
+   но добавляем для явности */
+.avga-prev { letter-spacing: -0.05em; }
+.avga-next { letter-spacing: -0.05em; }
