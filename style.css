@@ -1,74 +1,66 @@
-/* ═══════════════════════════════════════════════════
-   Avatar Gallery — style.css  v1.1
-   ═══════════════════════════════════════════════════ */
+/* Avatar Gallery v1.2 — style.css */
 
-/* ── Settings panel wrapper ─────────────────────────────────────── */
-#avga-settings { margin-bottom: 0.5em; }
+/* ── Panel layout ─────────────────────────────────────────────── */
+#avga-panel { margin-bottom: 4px; }
 
-/* ── Section ────────────────────────────────────────────────────── */
 .avga-section {
+    padding: 8px 0 4px;
     display: flex;
     flex-direction: column;
-    gap: 0.55em;
-    padding: 0.6em 0 0.2em;
+    gap: 7px;
 }
-.avga-section-title {
+.avga-stitle {
     font-weight: 600;
-    font-size: 0.95em;
-    color: var(--SmartThemeBodyColor, #ccc);
-    margin-bottom: 0.1em;
+    font-size: 0.92em;
 }
-.avga-hr {
+.avga-divider {
     border: none;
-    border-top: 1px solid rgba(255,255,255,0.08);
-    margin: 0.4em 0;
+    border-top: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.1));
+    margin: 2px 0;
 }
-
-/* ── Row ────────────────────────────────────────────────────────── */
 .avga-row {
     display: flex;
     align-items: center;
-    gap: 0.5em;
+    gap: 8px;
     flex-wrap: wrap;
 }
-.avga-row-actions { margin-top: 0.1em; }
-.avga-label  { font-size: 0.85em; opacity: 0.65; flex-shrink: 0; }
-.avga-count  { font-size: 0.78em; opacity: 0.45; margin-left: auto; }
-.avga-select { flex: 1; min-width: 0; max-width: 260px; }
+.avga-lbl { font-size: 0.82em; opacity: 0.6; flex-shrink: 0; }
+.avga-cnt { font-size: 0.75em; opacity: 0.4; margin-left: auto; }
+.avga-row .text_pole { flex: 1; min-width: 0; max-width: 240px; }
 
-/* ── Gallery strip ──────────────────────────────────────────────── */
+/* ── Strip ────────────────────────────────────────────────────── */
 .avga-strip {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.45em;
-    min-height: 56px;
-    padding: 0.2em 0;
+    gap: 6px;
+    min-height: 52px;
+    padding: 2px 0;
+    align-items: flex-start;
 }
 .avga-empty {
-    font-size: 0.78em;
-    opacity: 0.35;
-    align-self: center;
-    padding: 0.3em 0;
+    font-size: 0.77em;
+    opacity: 0.38;
     font-style: italic;
+    align-self: center;
 }
 
-/* ── Thumbnail ──────────────────────────────────────────────────── */
+/* ── Thumbnail ────────────────────────────────────────────────── */
 .avga-thumb {
     position: relative;
-    width: 64px;
-    height: 64px;
+    width: 62px;
+    height: 62px;
     border-radius: 8px;
     overflow: hidden;
     cursor: pointer;
     border: 2px solid transparent;
-    transition: border-color 150ms, transform 150ms, box-shadow 150ms;
     flex-shrink: 0;
-    background: rgba(255,255,255,0.05);
+    background: rgba(255,255,255,0.06);
+    transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
 }
-.avga-thumb:hover { transform: scale(1.06); }
-.avga-thumb.avga-thumb-active {
-    border-color: var(--SmartThemeQuoteColor, #4fdb9a);
-    box-shadow: 0 0 0 3px oklch(from var(--SmartThemeQuoteColor, #4fdb9a) l c h / 0.25);
+.avga-thumb:hover { transform: scale(1.07); }
+.avga-thumb.avga-active {
+    border-color: var(--SmartThemeQuoteColor, #70e0a0);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--SmartThemeQuoteColor, #70e0a0) 30%, transparent);
 }
 .avga-thumb img {
     width: 100%;
@@ -78,76 +70,60 @@
     pointer-events: none;
 }
 
-/* ── Delete button on thumb ─────────────────────────────────────── */
+/* ── Delete ───────────────────────────────────────────────────── */
 .avga-del {
     position: absolute;
     top: 2px; right: 2px;
-    width: 18px; height: 18px;
+    width: 17px; height: 17px;
     background: rgba(0,0,0,0.72);
     color: #ff7070;
     border: none;
     border-radius: 50%;
-    font-size: 0.85em;
+    font-size: 12px;
     line-height: 1;
-    cursor: pointer;
     display: none;
     align-items: center;
     justify-content: center;
+    cursor: pointer;
     padding: 0;
-    transition: background 130ms;
 }
 .avga-thumb:hover .avga-del { display: flex; }
-.avga-del:hover { background: rgba(200,40,40,0.88); color: #fff; }
+.avga-del:hover { background: rgba(200,30,30,0.9); color: #fff; }
 
-/* ══════════════════════════════════════════════════════
-   ZOOM NAVIGATION
-   ══════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════
+   ZOOM NAV
+   ══════════════════════════════════════════════════ */
 .avga-zoom-nav {
     position: absolute;
-    bottom: 14px;
+    bottom: 12px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
     align-items: center;
-    gap: 0.35em;
-    background: rgba(0,0,0,0.62);
+    gap: 4px;
+    background: rgba(0,0,0,0.6);
     border: 1px solid rgba(255,255,255,0.15);
-    border-radius: 22px;
-    padding: 0.3em 0.8em;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    z-index: 100;
+    border-radius: 20px;
+    padding: 4px 12px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: 9999;
     user-select: none;
-    -webkit-user-select: none;
-    animation: avga-navIn 0.2s ease-out;
 }
-@keyframes avga-navIn {
-    from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-}
-
 .avga-zb {
     background: none;
     border: none;
-    color: rgba(255,255,255,0.8);
-    font-size: 1.4em;
+    color: rgba(255,255,255,0.85);
+    font-size: 22px;
     line-height: 1;
     cursor: pointer;
-    padding: 0.05em 0.2em;
-    border-radius: 50%;
-    transition: background 130ms, color 130ms;
+    padding: 0 4px;
+    transition: color 120ms;
 }
-.avga-zb:hover { background: rgba(255,255,255,0.15); color: #fff; }
-
-.avga-counter {
-    font-size: 0.78em;
-    color: rgba(255,255,255,0.65);
-    min-width: 3em;
+.avga-zb:hover { color: #fff; }
+#avga-zcnt {
+    font-size: 13px;
+    color: rgba(255,255,255,0.6);
+    min-width: 36px;
     text-align: center;
-}
-
-/* ── Mobile ─────────────────────────────────────────────────────── */
-@media (max-width: 500px) {
-    .avga-thumb { width: 52px; height: 52px; }
-    .avga-zoom-nav { bottom: 8px; padding: 0.2em 0.5em; }
 }
