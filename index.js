@@ -1,28 +1,22 @@
 // ═══════════════════════════════════════════════════════════════════
-// Avatar Gallery — SillyTavern Extension v1.1
-// Панель в Extensions + галерея аватаров + навигация в зуме
+// Avatar Gallery v1.2 — минимальные зависимости, максимальная совместимость
 // ═══════════════════════════════════════════════════════════════════
 
-import { extension_settings, getContext } from '../../../extensions.js';
-import {
-    saveSettingsDebounced,
-    power_user,
-    eventSource,
-    event_types,
-} from '../../../../script.js';
+// Используем только те импорты, которые точно есть в любой ST >= 1.10
+import { extension_settings, renderExtensionTemplateAsync } from '../../../extensions.js';
+import { saveSettingsDebounced, power_user, eventSource, event_types } from '../../../../script.js';
 
-const EXT   = 'avatarGallery';
-const LOG   = (...a) => console.log('[AvatarGallery]', ...a);
+const EXT = 'avatarGallery';
 const FOLDER = 'third-party/avatar-gallery';
+const log = (...a) => console.log('[AvatarGallery]', ...a);
 
-// ── Настройки ─────────────────────────────────────────────────────
-if (!extension_settings[EXT])   extension_settings[EXT]   = {};
+// ── Хранилище ─────────────────────────────────────────────────────
+if (!extension_settings[EXT]) extension_settings[EXT] = {};
 const S = extension_settings[EXT];
 if (!S.personas)   S.personas   = {};
 if (!S.characters) S.characters = {};
 const save = () => saveSettingsDebounced();
 
-// gallery(type, key) → { images: [base64,...], current: 0 }
 const getGal = (type, key) => {
     if (!S[type][key]) S[type][key] = { images: [], current: 0 };
     return S[type][key];
@@ -36,23 +30,42 @@ const toB64 = file => new Promise((ok, err) => {
     r.onerror = err;
     r.readAsDataURL(file);
 });
-const normAv = str => (str || '').split('/').pop().split('?')[0];
+const normAv = s => (s || '').split('/').pop().split('?')[0];
 
-// ── Apply avatar to DOM ────────────────────────────────────────────
+// Получить персонажей через getContext (если есть) или через глобальный characters
+const getChars = () => {
+    try {
+        // Пробуем импортированный getContext
+        const ctx = typeof getContext === 'function' ? getContext() : null;
+        if (ctx?.characters?.length) return ctx.characters;
+    } catch(_) {}
+    // Fallback: глобальный массив ST
+    return window.characters || [];
+};
+const getCurCharIdx = () => {
+    try {
+        const ctx = typeof getContext === 'function' ? getContext() : null;
+        if (ctx?.characterId != null) return ctx.characterId;
+    } catch(_) {}
+    return window.this_chid ?? -1;
+};
+
+// ── Apply to DOM ───────────────────────────────────────────────────
 const applyPersona = (key, src) => {
-    if (power_user?.personas?.[key]) {
-        power_user.personas[key].avatar = src;
-        save();
-    }
-    document.querySelectorAll('.mes[is_user="true"] .mes_img, .mes[is_user="true"] img.avatar')
-        .forEach(i => { i.src = src; });
-    document.querySelectorAll(`[data-name="${CSS.escape(key)}"] img, .persona_item[title="${CSS.escape(key)}"] img`)
-        .forEach(i => { i.src = src; });
+    try {
+        if (power_user?.personas?.[key]) { power_user.personas[key].avatar = src; save(); }
+        document.querySelectorAll('.mes[is_user="true"] .mes_img, .mes[is_user="true"] img.avatar')
+            .forEach(i => { i.src = src; });
+        document.querySelectorAll(`[data-name="${CSS.escape(key)}"] img`)
+            .forEach(i => { i.src = src; });
+    } catch(e) { log('applyPersona error', e); }
 };
 const applyChar = (key, src) => {
-    getGal('characters', key)._cur = src;
-    save();
-    reapplyChars();
+    try {
+        getGal('characters', key)._cur = src;
+        save();
+        reapplyChars();
+    } catch(e) { log('applyChar error', e); }
 };
 const reapplyChars = () => {
     for (const [k, d] of Object.entries(S.characters)) {
@@ -65,236 +78,218 @@ const reapplyChars = () => {
 
 // ── Zoom context ───────────────────────────────────────────────────
 let _zCtx = null;
-const detectZoomCtx = img => {
-    const mes = img.closest('.mes');
-    if (mes) {
+document.addEventListener('click', e => {
+    try {
+        const img = e.target.closest('.mes_img, .mes_img_container img');
+        if (!img) return;
+        const mes = img.closest('.mes');
+        if (!mes) return;
         if (mes.getAttribute('is_user') === 'true') {
             const n = power_user?.persona;
-            if (n) { _zCtx = { type: 'personas', key: n }; return; }
+            if (n) _zCtx = { type: 'personas', key: n };
         } else {
-            const ctx = getContext();
-            const av = normAv(ctx?.characters?.[ctx?.characterId]?.avatar);
-            if (av) { _zCtx = { type: 'characters', key: av }; return; }
+            const chars = getChars();
+            const idx   = getCurCharIdx();
+            const av    = normAv(chars[idx]?.avatar);
+            if (av) _zCtx = { type: 'characters', key: av };
         }
-    }
-};
-document.addEventListener('click', e => {
-    const img = e.target.closest('.mes_img, .mes_img_container img, img.avatar');
-    if (img) detectZoomCtx(img);
+    } catch(_) {}
 }, true);
 
-// ── File input ─────────────────────────────────────────────────────
-const mkFileInput = (onFiles) => {
-    const fi = Object.assign(document.createElement('input'), {
-        type: 'file', accept: 'image/*', multiple: true
-    });
+// ── File input factory ────────────────────────────────────────────
+const mkInput = cb => {
+    const fi = Object.assign(document.createElement('input'), { type: 'file', accept: 'image/*', multiple: true });
     fi.style.display = 'none';
     document.body.append(fi);
     fi.addEventListener('change', async () => {
-        for (const f of fi.files) await onFiles(await toB64(f));
+        for (const f of fi.files) await cb(await toB64(f));
         fi.value = '';
     });
     return fi;
 };
 
 // ══════════════════════════════════════════════════════════════════
-// SETTINGS PANEL (вставляется в #extensions_settings)
+//  SETTINGS PANEL
 // ══════════════════════════════════════════════════════════════════
-const buildSettingsPanel = () => {
-    const wrap = document.createElement('div');
-    wrap.id = 'avga-settings';
-    wrap.innerHTML = `
-    <div class="inline-drawer">
-        <div class="inline-drawer-toggle inline-drawer-header">
-            <b>🖼 Avatar Gallery</b>
-            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down"></div>
+const PANEL_HTML = `
+<div id="avga-panel">
+  <div class="inline-drawer">
+    <div class="inline-drawer-toggle inline-drawer-header">
+      <b>🖼 Avatar Gallery</b>
+      <div class="inline-drawer-icon fa-solid fa-circle-chevron-down"></div>
+    </div>
+    <div class="inline-drawer-content">
+
+      <div class="avga-section">
+        <div class="avga-stitle">👤 Персоны</div>
+        <div class="avga-row">
+          <label class="avga-lbl">Персона:</label>
+          <select id="avga-psel" class="text_pole"></select>
         </div>
-        <div class="inline-drawer-content">
-
-            <!-- ── Персоны ── -->
-            <div class="avga-section">
-                <div class="avga-section-title">👤 Персоны</div>
-                <div class="avga-row">
-                    <label class="avga-label">Персона:</label>
-                    <select id="avga-persona-sel" class="avga-select text_pole"></select>
-                </div>
-                <div class="avga-strip" id="avga-strip-persona"></div>
-                <div class="avga-row avga-row-actions">
-                    <button id="avga-persona-add" class="menu_button">+ Добавить фото</button>
-                    <span class="avga-count" id="avga-persona-count">0 фото</span>
-                </div>
-            </div>
-
-            <hr class="avga-hr"/>
-
-            <!-- ── Персонажи ── -->
-            <div class="avga-section">
-                <div class="avga-section-title">🤖 Персонаж</div>
-                <div class="avga-row">
-                    <label class="avga-label">Персонаж:</label>
-                    <select id="avga-char-sel" class="avga-select text_pole"></select>
-                </div>
-                <div class="avga-strip" id="avga-strip-char"></div>
-                <div class="avga-row avga-row-actions">
-                    <button id="avga-char-add" class="menu_button">+ Добавить фото</button>
-                    <span class="avga-count" id="avga-char-count">0 фото</span>
-                </div>
-            </div>
-
+        <div id="avga-pstrip" class="avga-strip"></div>
+        <div class="avga-row">
+          <button id="avga-padd" class="menu_button menu_button_icon">
+            <i class="fa-solid fa-plus"></i> Добавить фото
+          </button>
+          <span id="avga-pcnt" class="avga-cnt"></span>
         </div>
-    </div>`;
+      </div>
 
-    // ── Populate persona selector ──────────────────────────────────
-    const personaSel = wrap.querySelector('#avga-persona-sel');
-    const populatePersonas = () => {
-        const current = personaSel.value;
-        personaSel.innerHTML = '';
-        const personas = power_user?.personas ?? {};
-        if (!Object.keys(personas).length) {
-            personaSel.innerHTML = '<option value="">— нет персон —</option>';
-        } else {
-            for (const name of Object.keys(personas)) {
-                const opt = document.createElement('option');
-                opt.value = name;
-                opt.textContent = name;
-                personaSel.append(opt);
-            }
-            if (current && [...personaSel.options].find(o => o.value === current))
-                personaSel.value = current;
-        }
-        renderPersonaStrip();
-    };
-    personaSel.addEventListener('change', renderPersonaStrip);
+      <div class="avga-divider"></div>
 
-    // ── Populate character selector ────────────────────────────────
-    const charSel = wrap.querySelector('#avga-char-sel');
-    const populateChars = () => {
-        const current = charSel.value;
-        charSel.innerHTML = '';
-        const ctx = getContext();
-        const chars = ctx?.characters ?? [];
-        if (!chars.length) {
-            charSel.innerHTML = '<option value="">— нет персонажей —</option>';
-        } else {
-            chars.forEach(ch => {
-                const key = normAv(ch.avatar);
-                const opt = document.createElement('option');
-                opt.value = key;
-                opt.textContent = ch.name || key;
-                charSel.append(opt);
-            });
-            // Default: current character
-            const curChar = ctx?.characters?.[ctx?.characterId];
-            const curKey  = normAv(curChar?.avatar);
-            if (curKey) charSel.value = curKey;
-            else if (current && [...charSel.options].find(o => o.value === current))
-                charSel.value = current;
-        }
-        renderCharStrip();
-    };
-    charSel.addEventListener('change', renderCharStrip);
+      <div class="avga-section">
+        <div class="avga-stitle">🤖 Персонажи</div>
+        <div class="avga-row">
+          <label class="avga-lbl">Персонаж:</label>
+          <select id="avga-csel" class="text_pole"></select>
+        </div>
+        <div id="avga-cstrip" class="avga-strip"></div>
+        <div class="avga-row">
+          <button id="avga-cadd" class="menu_button menu_button_icon">
+            <i class="fa-solid fa-plus"></i> Добавить фото
+          </button>
+          <span id="avga-ccnt" class="avga-cnt"></span>
+        </div>
+      </div>
 
-    // ── Strip renderer ────────────────────────────────────────────
-    const renderStrip = (type, key, stripEl, countEl) => {
-        stripEl.innerHTML = '';
-        if (!key) return;
-        const g = getGal(type, key);
-        countEl.textContent = `${g.images.length} фото`;
+    </div>
+  </div>
+</div>`;
 
-        g.images.forEach((src, i) => {
-            const thumb = document.createElement('div');
-            thumb.className = 'avga-thumb' + (i === g.current ? ' avga-thumb-active' : '');
-            thumb.title = i === g.current ? 'Активный' : `Фото ${i + 1}`;
+// ── Render strip ───────────────────────────────────────────────────
+const renderStrip = (type, key, stripId, cntId) => {
+    const strip = document.getElementById(stripId);
+    const cnt   = document.getElementById(cntId);
+    if (!strip) return;
+    strip.innerHTML = '';
+    if (!key) { if (cnt) cnt.textContent = ''; return; }
 
-            const img = document.createElement('img');
-            img.src = src;
-            img.loading = 'lazy';
-            img.addEventListener('click', () => {
-                g.current = i;
-                save();
-                if (type === 'personas') applyPersona(key, src);
-                else applyChar(key, src);
-                renderStrip(type, key, stripEl, countEl);
-                updateZoomNav();
-            });
+    const g = getGal(type, key);
+    if (cnt) cnt.textContent = `${g.images.length} фото`;
 
-            const del = document.createElement('button');
-            del.className = 'avga-del';
-            del.textContent = '×';
-            del.title = 'Удалить';
-            del.addEventListener('click', e => {
-                e.stopPropagation();
-                g.images.splice(i, 1);
-                if (g._cur && i === g.current) g._cur = null;
-                g.current = Math.max(0, Math.min(g.current, g.images.length - 1));
-                save();
-                renderStrip(type, key, stripEl, countEl);
-                updateZoomNav();
-            });
-            thumb.append(img, del);
-            stripEl.append(thumb);
+    if (!g.images.length) {
+        strip.innerHTML = '<div class="avga-empty">Нет фото — нажми «Добавить фото»</div>';
+        return;
+    }
+
+    g.images.forEach((src, i) => {
+        const cell = document.createElement('div');
+        cell.className = 'avga-thumb' + (i === g.current ? ' avga-active' : '');
+        cell.title = i === g.current ? '✓ Активный' : `Фото ${i + 1} — нажми, чтобы выбрать`;
+
+        const img = document.createElement('img');
+        img.src = src;
+        img.loading = 'lazy';
+
+        img.addEventListener('click', () => {
+            g.current = i;
+            save();
+            if (type === 'personas') applyPersona(key, src);
+            else applyChar(key, src);
+            renderStrip(type, key, stripId, cntId);
+            updateZoomNav();
         });
 
-        if (!g.images.length) {
-            const empty = document.createElement('div');
-            empty.className = 'avga-empty';
-            empty.textContent = 'Нет фото. Нажми «+ Добавить фото»';
-            stripEl.append(empty);
-        }
-    };
+        const del = document.createElement('button');
+        del.className = 'avga-del';
+        del.title = 'Удалить';
+        del.innerHTML = '&times;';
+        del.addEventListener('click', ev => {
+            ev.stopPropagation();
+            g.images.splice(i, 1);
+            if (i === g.current) { g._cur = null; g.current = Math.max(0, i - 1); }
+            save();
+            renderStrip(type, key, stripId, cntId);
+            updateZoomNav();
+        });
 
-    const stripPersona = wrap.querySelector('#avga-strip-persona');
-    const stripChar    = wrap.querySelector('#avga-strip-char');
-    const countPersona = wrap.querySelector('#avga-persona-count');
-    const countChar    = wrap.querySelector('#avga-char-count');
+        cell.append(img, del);
+        strip.append(cell);
+    });
+};
 
-    const renderPersonaStrip = () => renderStrip('personas',   personaSel.value, stripPersona, countPersona);
-    const renderCharStrip    = () => renderStrip('characters', charSel.value,    stripChar,    countChar);
+// ── Wire up selectors ─────────────────────────────────────────────
+const populatePersonas = () => {
+    const sel = document.getElementById('avga-psel');
+    if (!sel) return;
+    const saved = sel.value;
+    sel.innerHTML = '';
+    const personas = power_user?.personas ?? {};
+    const keys = Object.keys(personas);
+    if (!keys.length) {
+        sel.innerHTML = '<option value="">— нет персон —</option>';
+    } else {
+        keys.forEach(n => { const o = document.createElement('option'); o.value = o.textContent = n; sel.append(o); });
+        if (saved && sel.querySelector(`option[value="${CSS.escape(saved)}"]`)) sel.value = saved;
+        // Preselect current
+        else if (power_user?.persona) sel.value = power_user.persona;
+    }
+    renderStrip('personas', sel.value, 'avga-pstrip', 'avga-pcnt');
+};
 
-    // ── Upload buttons ─────────────────────────────────────────────
-    const fiPersona = mkFileInput(async b64 => {
-        const key = personaSel.value;
+const populateChars = () => {
+    const sel = document.getElementById('avga-csel');
+    if (!sel) return;
+    const saved = sel.value;
+    sel.innerHTML = '';
+    const chars = getChars();
+    if (!chars.length) {
+        sel.innerHTML = '<option value="">— нет персонажей —</option>';
+    } else {
+        chars.forEach(ch => {
+            const key = normAv(ch.avatar);
+            const o = document.createElement('option');
+            o.value = key;
+            o.textContent = ch.name || key;
+            sel.append(o);
+        });
+        const curKey = normAv(getChars()[getCurCharIdx()]?.avatar);
+        if (curKey) sel.value = curKey;
+        else if (saved && sel.querySelector(`option[value="${CSS.escape(saved)}"]`)) sel.value = saved;
+    }
+    renderStrip('characters', sel.value, 'avga-cstrip', 'avga-ccnt');
+};
+
+const wirePanel = () => {
+    const psel = document.getElementById('avga-psel');
+    const csel = document.getElementById('avga-csel');
+    if (psel) psel.addEventListener('change', () => renderStrip('personas',   psel.value, 'avga-pstrip', 'avga-pcnt'));
+    if (csel) csel.addEventListener('change', () => renderStrip('characters', csel.value, 'avga-cstrip', 'avga-ccnt'));
+
+    const fiP = mkInput(async b64 => {
+        const key = document.getElementById('avga-psel')?.value;
         if (!key) return;
         getGal('personas', key).images.push(b64);
-        save(); renderPersonaStrip(); updateZoomNav();
+        save();
+        renderStrip('personas', key, 'avga-pstrip', 'avga-pcnt');
+        updateZoomNav();
     });
-    const fiChar = mkFileInput(async b64 => {
-        const key = charSel.value;
+    const fiC = mkInput(async b64 => {
+        const key = document.getElementById('avga-csel')?.value;
         if (!key) return;
         getGal('characters', key).images.push(b64);
-        save(); renderCharStrip(); updateZoomNav();
+        save();
+        renderStrip('characters', key, 'avga-cstrip', 'avga-ccnt');
+        updateZoomNav();
     });
 
-    wrap.querySelector('#avga-persona-add').addEventListener('click', () => fiPersona.click());
-    wrap.querySelector('#avga-char-add').addEventListener('click',    () => fiChar.click());
+    document.getElementById('avga-padd')?.addEventListener('click', () => fiP.click());
+    document.getElementById('avga-cadd')?.addEventListener('click', () => fiC.click());
 
-    // ── Refresh on ST events ──────────────────────────────────────
-    const refresh = () => { populatePersonas(); populateChars(); };
-    const tryOn = (ev, fn) => { try { if (event_types[ev]) eventSource.on(event_types[ev], fn); } catch(_){} };
-    tryOn('CHARACTER_SELECTED', () => { populateChars(); reapplyChars(); });
-    tryOn('CHAT_CHANGED',       () => { populatePersonas(); populateChars(); reapplyChars(); });
-    tryOn('USER_MESSAGE_RENDERED', reapplyChars);
-    tryOn('LLM_MESSAGE_RENDERED',  reapplyChars);
-
-    // Expose refresh for external calls
-    wrap._refresh = refresh;
-
-    // Initial populate (deferred so ST has time to load characters)
-    setTimeout(refresh, 500);
-
-    return wrap;
+    populatePersonas();
+    populateChars();
 };
 
 // ══════════════════════════════════════════════════════════════════
-// ZOOM NAVIGATION OVERLAY
+//  ZOOM NAV
 // ══════════════════════════════════════════════════════════════════
 const zoomNav = document.createElement('div');
 zoomNav.className = 'avga-zoom-nav';
 zoomNav.hidden = true;
 zoomNav.innerHTML = `
-    <button class="avga-zb avga-prev" title="Предыдущий">‹</button>
-    <span class="avga-counter"></span>
-    <button class="avga-zb avga-next" title="Следующий">›</button>`;
+    <button class="avga-zb" id="avga-zprev" title="Предыдущий">&#8249;</button>
+    <span id="avga-zcnt"></span>
+    <button class="avga-zb" id="avga-znext" title="Следующий">&#8250;</button>`;
 
 const navigate = dir => {
     if (!_zCtx) return;
@@ -304,32 +299,31 @@ const navigate = dir => {
     g.current = (g.current + dir + g.images.length) % g.images.length;
     save();
     const src = g.images[g.current];
-    const zImg = document.querySelector([
-        '.zoomed_avatar_content img', '.zoomed_avatar img',
-        '#zoom_portrait', '#character_popup img', '.avatar_zoom img',
-    ].join(', '));
+    const zImg = document.querySelector(
+        '.zoomed_avatar_content img, .zoomed_avatar img, #zoom_portrait, #character_popup img'
+    );
     if (zImg) zImg.src = src;
     if (type === 'personas') applyPersona(key, src);
     else applyChar(key, src);
     updateZoomNav();
-    // Refresh settings strip if open
-    document.querySelector('#avga-settings')?._refresh?.();
+    renderStrip(type, key, type === 'personas' ? 'avga-pstrip' : 'avga-cstrip', type === 'personas' ? 'avga-pcnt' : 'avga-ccnt');
 };
 
-zoomNav.querySelector('.avga-prev').addEventListener('click', e => { e.stopPropagation(); navigate(-1); });
-zoomNav.querySelector('.avga-next').addEventListener('click', e => { e.stopPropagation(); navigate(1); });
+zoomNav.addEventListener('click', e => {
+    if (e.target.id === 'avga-zprev') navigate(-1);
+    if (e.target.id === 'avga-znext') navigate(1);
+});
 
 const updateZoomNav = () => {
     if (!_zCtx) { zoomNav.hidden = true; return; }
     const g = S[_zCtx.type]?.[_zCtx.key];
     const total = g?.images?.length ?? 0;
     zoomNav.hidden = total < 2;
-    zoomNav.querySelector('.avga-counter').textContent =
-        total > 1 ? `${(g.current ?? 0) + 1} / ${total}` : '';
+    const cntEl = document.getElementById('avga-zcnt');
+    if (cntEl) cntEl.textContent = total > 1 ? `${(g.current ?? 0) + 1} / ${total}` : '';
 };
 
-// Attach zoom nav when zoom container appears
-const ZOOM_SEL = '.zoomed_avatar, .zoomed_avatar_content, #zoom_portrait, #character_popup, .avatar_zoom';
+const ZOOM_SEL = '.zoomed_avatar, .zoomed_avatar_content, #zoom_portrait, #character_popup';
 const attachZoomNav = () => {
     const el = document.querySelector(ZOOM_SEL);
     if (el && !el.contains(zoomNav)) {
@@ -341,33 +335,47 @@ const attachZoomNav = () => {
 new MutationObserver(attachZoomNav).observe(document.body, { childList: true, subtree: true });
 
 // ══════════════════════════════════════════════════════════════════
-// INIT
+//  EVENTS
 // ══════════════════════════════════════════════════════════════════
-const init = () => {
-    LOG('Loading v1.1...');
+const tryOn = (ev, fn) => {
+    try { if (event_types[ev]) eventSource.on(event_types[ev], fn); } catch(_) {}
+};
+tryOn('CHARACTER_SELECTED', () => { populateChars(); reapplyChars(); });
+tryOn('CHAT_CHANGED',       () => { populatePersonas(); populateChars(); reapplyChars(); });
+tryOn('USER_MESSAGE_RENDERED', reapplyChars);
+tryOn('LLM_MESSAGE_RENDERED',  reapplyChars);
 
-    // Inject settings panel into extensions settings
-    const target = document.querySelector('#extensions_settings');
-    if (target) {
-        const panel = buildSettingsPanel();
-        target.append(panel);
-        LOG('Settings panel injected ✅');
-    } else {
-        // Wait for ST to render the extensions page
+// ══════════════════════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════════════════════
+const injectPanel = () => {
+    if (document.getElementById('avga-panel')) return; // уже есть
+    const target = document.getElementById('extensions_settings');
+    if (!target) return false;
+    target.insertAdjacentHTML('beforeend', PANEL_HTML);
+    wirePanel();
+    log('Panel injected ✅');
+    return true;
+};
+
+const init = async () => {
+    log('Loading v1.2...');
+
+    // Пробуем вставить сейчас
+    if (!injectPanel()) {
+        // DOM ещё не готов — ждём
         const obs = new MutationObserver(() => {
-            const t = document.querySelector('#extensions_settings');
-            if (t) {
-                obs.disconnect();
-                const panel = buildSettingsPanel();
-                t.append(panel);
-                LOG('Settings panel injected (delayed) ✅');
-            }
+            if (injectPanel()) obs.disconnect();
         });
         obs.observe(document.body, { childList: true, subtree: true });
     }
 
     reapplyChars();
-    LOG('Loaded ✅');
+
+    // Повторная синхронизация через 2s (ST медленно грузит список персонажей)
+    setTimeout(() => { populatePersonas(); populateChars(); }, 2000);
+
+    log('Loaded ✅');
 };
 
 init();
