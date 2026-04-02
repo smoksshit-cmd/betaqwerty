@@ -5,7 +5,8 @@
 // Используем только те импорты, которые точно есть в любой ST >= 1.10
 import { extension_settings } from '../../../extensions.js';
 import { saveSettingsDebounced, eventSource, event_types } from '../../../../script.js';
-const power_user = window.power_user ?? {}; // не экспортируется в некоторых версиях ST
+// power_user не экспортируется в некоторых версиях ST — берём из window
+const getPU = () => window.power_user ?? {};
 
 const EXT = 'avatarGallery';
 const FOLDER = 'third-party/avatar-gallery';
@@ -54,7 +55,7 @@ const getCurCharIdx = () => {
 // ── Apply to DOM ───────────────────────────────────────────────────
 const applyPersona = (key, src) => {
     try {
-        if (power_user?.personas?.[key]) { power_user.personas[key].avatar = src; save(); }
+        if (getPU()?.personas?.[key]) { getPU().personas[key].avatar = src; save(); }
         document.querySelectorAll('.mes[is_user="true"] .mes_img, .mes[is_user="true"] img.avatar')
             .forEach(i => { i.src = src; });
         document.querySelectorAll(`[data-name="${CSS.escape(key)}"] img`)
@@ -86,7 +87,7 @@ document.addEventListener('click', e => {
         const mes = img.closest('.mes');
         if (!mes) return;
         if (mes.getAttribute('is_user') === 'true') {
-            const n = power_user?.persona;
+            const n = getPU()?.persona;
             if (n) _zCtx = { type: 'personas', key: n };
         } else {
             const chars = getChars();
@@ -215,7 +216,7 @@ const populatePersonas = () => {
     if (!sel) return;
     const saved = sel.value;
     sel.innerHTML = '';
-    const personas = power_user?.personas ?? {};
+    const personas = getPU()?.personas ?? {};
     const keys = Object.keys(personas);
     if (!keys.length) {
         sel.innerHTML = '<option value="">— нет персон —</option>';
@@ -223,7 +224,7 @@ const populatePersonas = () => {
         keys.forEach(n => { const o = document.createElement('option'); o.value = o.textContent = n; sel.append(o); });
         if (saved && sel.querySelector(`option[value="${CSS.escape(saved)}"]`)) sel.value = saved;
         // Preselect current
-        else if (power_user?.persona) sel.value = power_user.persona;
+        else if (getPU()?.persona) sel.value = getPU().persona;
     }
     renderStrip('personas', sel.value, 'avga-pstrip', 'avga-pcnt');
 };
