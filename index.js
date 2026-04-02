@@ -3,8 +3,9 @@
 // ═══════════════════════════════════════════════════════════════════
 
 // Используем только те импорты, которые точно есть в любой ST >= 1.10
-import { extension_settings, renderExtensionTemplateAsync } from '../../../extensions.js';
-import { saveSettingsDebounced, power_user, eventSource, event_types } from '../../../../script.js';
+import { extension_settings } from '../../../extensions.js';
+import { saveSettingsDebounced, eventSource, event_types } from '../../../../script.js';
+const power_user = window.power_user ?? {}; // не экспортируется в некоторых версиях ST
 
 const EXT = 'avatarGallery';
 const FOLDER = 'third-party/avatar-gallery';
