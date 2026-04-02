@@ -50,11 +50,13 @@ const getRecentChatText = (depth = 15) =>
 
 // ─── Статистика сессии ────────────────────────────────────────────────────────
 const sessionHits = new Map(); // 'world§§§uid' → count
+let _genFirstTimers = new Set(); // entries appearing for FIRST time this generation
 const bumpHit = (entry) => {
     const key = `${entry.world}§§§${entry.uid}`;
     sessionHits.set(key, (sessionHits.get(key) || 0) + 1);
 };
-const getHits = (entry) => sessionHits.get(`${entry.world}§§§${entry.uid}`) || 0;
+const getHits     = (entry) => sessionHits.get(`${entry.world}§§§${entry.uid}`) || 0;
+const isSessionNew = (entry) => _genFirstTimers.has(`${entry.world}§§§${entry.uid}`);
 
 // ─── История активаций ────────────────────────────────────────────────────────
 const activationHistory = []; // [{ts, entries: [{world,uid,comment,key}], added:[], removed:[]}]
@@ -171,6 +173,26 @@ const applyInlineHighlights = (entries) => {
 let _prevEntryIds = new Set();
 const getDiffStatus = (entry) =>
     _prevEntryIds.has(`${entry.world}§§§${entry.uid}`) ? 'same' : 'new';
+
+// ─── Свёрнутые группы ──────────────────────────────────────────────────────────
+const _collapsedGroups = new Set();
+
+// ─── Jump to WI entry ────────────────────────────────────────────────────────────
+const jumpToEntry = async (entry) => {
+    const btn = document.querySelector('#WIEntriesButEdit, .drawer-toggle[data-target="world_info_drawer"], [data-drawer="world_info"]');
+    if (btn) btn.click();
+    await delay(350);
+    const sel = document.querySelector('#world_editor_select');
+    if (sel) {
+        const opt = [...sel.options].find(o => o.value === entry.world || o.textContent.trim() === entry.world);
+        if (opt) { sel.value = opt.value; sel.dispatchEvent(new Event('change')); await delay(250); }
+    }
+    const searchEl = document.querySelector('#world_info_search');
+    if (searchEl) {
+        searchEl.value = entry.comment?.length ? entry.comment : (entry.key?.[0] || '');
+        searchEl.dispatchEvent(new Event('input'));
+    }
+};
 
 // ─── Быстрый тогл записи ──────────────────────────────────────────────────────
 const toggleEntry = async (entry) => {
@@ -419,8 +441,9 @@ const init = () => {
         const showTokens  = cfg.showTokens     ?? true;
         const showKey     = cfg.showMatchedKey ?? true;
         const doDiff      = cfg.diffHighlight  ?? true;
-        const compact     = cfg.compact        ?? false;
-        const query       = searchBar.value.toLowerCase().trim();
+        const compact      = cfg.compact        ?? false;
+        const sortByTokens = cfg.sortByTokens   ?? false;
+        const query        = searchBar.value.toLowerCase().trim();
 
         const wiList = currentEntryList.filter(e => e.type === 'wi');
 
@@ -458,9 +481,16 @@ const init = () => {
                     : (chat_metadata[metadata_keys.depth] + (e.position === world_info_position.ANTop ? 0.1 : 0));
             }
 
+            let groupContainer = entriesContainer;
             if (isGrouped) {
+                const isCollapsed = _collapsedGroups.has(world);
                 const worldEl = document.createElement('div');
                 worldEl.classList.add('stwii--world');
+                worldEl.style.cursor = 'pointer';
+                worldEl.title = isCollapsed ? 'Развернуть группу' : 'Свернуть группу';
+                const chevron = document.createElement('span');
+                chevron.classList.add('stwii--chevron');
+                chevron.textContent = isCollapsed ? ' ▸' : ' ▾';
                 const dot = document.createElement('span');
                 dot.classList.add('stwii--worldDot');
                 dot.style.background = getBookColor(world);
@@ -471,12 +501,21 @@ const init = () => {
                     const gt = document.createElement('span');
                     gt.classList.add('stwii--groupTokens');
                     gt.textContent = `~${groupTokens}t`;
-                    worldEl.append(dot, lbl, gt);
-                } else { worldEl.append(dot, lbl); }
-                entriesContainer.append(worldEl);
+                    worldEl.append(dot, lbl, gt, chevron);
+                } else { worldEl.append(dot, lbl, chevron); }
+                worldEl.addEventListener('click', () => {
+                    if (_collapsedGroups.has(world)) _collapsedGroups.delete(world);
+                    else _collapsedGroups.add(world);
+                    renderEntries();
+                });
+                groupContainer = document.createElement('div');
+                groupContainer.classList.add('stwii--groupContainer');
+                if (isCollapsed) groupContainer.classList.add('stwii--collapsed');
+                entriesContainer.append(worldEl, groupContainer);
             }
 
             ents.sort((a, b) => {
+                if (sortByTokens) return (b.estimatedTokens || 0) - (a.estimatedTokens || 0);
                 if (isOrdered) {
                     if (!depthPos.includes(a.position) && !depthPos.includes(b.position)) return a.position - b.position;
                     if ( depthPos.includes(a.position) && !depthPos.includes(b.position)) return 1;
@@ -541,6 +580,15 @@ const init = () => {
                 }
                 el.append(titleWrap);
 
+                // NEW badge — first time in session
+                if (isSessionNew(entry)) {
+                    const newBadge = document.createElement('span');
+                    newBadge.classList.add('stwii--newBadge');
+                    newBadge.textContent = 'NEW';
+                    newBadge.title = 'Эта запись активировалась впервые за сессию';
+                    el.insertBefore(newBadge, el.querySelector('.stwii--tokens') || el.querySelector('.stwii--actions') || null);
+                }
+
                 // Token count
                 if (showTokens && !compact) {
                     const tok = document.createElement('div');
@@ -572,6 +620,7 @@ const init = () => {
                 const actions = document.createElement('div');
                 actions.classList.add('stwii--actions');
 
+                // 📋 Copy
                 const copyBtn = document.createElement('button');
                 copyBtn.classList.add('stwii--actionBtn');
                 copyBtn.title = 'Скопировать контент';
@@ -582,7 +631,30 @@ const init = () => {
                     copyBtn.textContent = '✅';
                     setTimeout(() => copyBtn.textContent = '📋', 1200);
                 });
-                actions.append(copyBtn);
+
+                // ⏸ Quick toggle (enable/disable entry without opening lorebook)
+                const toggleBtn = document.createElement('button');
+                toggleBtn.classList.add('stwii--actionBtn');
+                toggleBtn.textContent = '⏸';
+                toggleBtn.title = 'Включить / выключить запись';
+                toggleBtn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    toggleBtn.textContent = '⏳';
+                    await toggleEntry(entry);
+                    toggleBtn.textContent = '⏸';
+                });
+
+                // 🔗 Jump to entry in lorebook editor
+                const jumpBtn = document.createElement('button');
+                jumpBtn.classList.add('stwii--actionBtn');
+                jumpBtn.textContent = '🔗';
+                jumpBtn.title = 'Открыть запись в редакторе лорбука';
+                jumpBtn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    await jumpToEntry(entry);
+                });
+
+                actions.append(copyBtn, toggleBtn, jumpBtn);
                 el.append(actions);
 
                 // Tooltip on click
@@ -594,7 +666,7 @@ const init = () => {
                 el.addEventListener('mouseenter', () => { _hoveredEntry = entryId; setHighlightHover(entryId, true); });
                 el.addEventListener('mouseleave', () => { _hoveredEntry = null;    setHighlightHover(entryId, false); });
 
-                entriesContainer.append(el);
+                groupContainer.append(el);
             }
         }
 
@@ -748,6 +820,7 @@ const init = () => {
     addConfigRow('inlineHighlight', true,  '✨ Подсвечивать слова в чате',         'Подчёркивать тригер-слова в сообщениях чата',         (v) => { if (!v) clearInlineHighlights(); else applyInlineHighlights(currentEntryList); });
     addConfigRow('diffHighlight',   true,  '🆕 Подсвечивать новые записи',        'Анимировать записи, которые появились с прошлой ген', () => renderEntries());
     addConfigRow('compact',         false, '📦 Компактный режим',                 'Компактный список без подробностей',                  () => renderEntries());
+    addConfigRow('sortByTokens',    false, '🪙 Сортировка по токенам',            'Самые тяжёлые записи показываются сверху',            () => renderEntries());
 
     // Лимит токенов контекста
     const ctxRow = document.createElement('div');
@@ -780,6 +853,13 @@ const init = () => {
 
         _prevEntryIds = prevIds;
         updateBadge(entryList.map(it => `${it.world}§§§${it.uid}`));
+
+        // Mark first-timers BEFORE bumping hits
+        _genFirstTimers = new Set(
+            entryList
+                .filter(e => !sessionHits.has(`${e.world}§§§${e.uid}`))
+                .map(e => `${e.world}§§§${e.uid}`)
+        );
 
         const recentText = getRecentChatText();
         for (const entry of entryList) {
