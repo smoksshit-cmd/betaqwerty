@@ -4,7 +4,7 @@
 
 // Используем только те импорты, которые точно есть в любой ST >= 1.10
 import { extension_settings } from '../../../extensions.js';
-import { saveSettingsDebounced, eventSource, event_types } from '../../../../script.js';
+import { saveSettingsDebounced, eventSource, event_types, characters, this_chid } from '../../../../script.js';
 // power_user не экспортируется в некоторых версиях ST — берём из window
 const getPU = () => window.power_user ?? {};
 
@@ -34,23 +34,9 @@ const toB64 = file => new Promise((ok, err) => {
 });
 const normAv = s => (s || '').split('/').pop().split('?')[0];
 
-// Получить персонажей через getContext (если есть) или через глобальный characters
-const getChars = () => {
-    try {
-        // Пробуем импортированный getContext
-        const ctx = typeof getContext === 'function' ? getContext() : null;
-        if (ctx?.characters?.length) return ctx.characters;
-    } catch(_) {}
-    // Fallback: глобальный массив ST
-    return window.characters || [];
-};
-const getCurCharIdx = () => {
-    try {
-        const ctx = typeof getContext === 'function' ? getContext() : null;
-        if (ctx?.characterId != null) return ctx.characterId;
-    } catch(_) {}
-    return window.this_chid ?? -1;
-};
+// characters и this_chid импортированы напрямую из script.js
+const getChars = () => characters || [];
+const getCurCharIdx = () => this_chid ?? -1;
 
 // ── Apply to DOM ───────────────────────────────────────────────────
 const applyPersona = (key, src) => {
@@ -216,15 +202,20 @@ const populatePersonas = () => {
     if (!sel) return;
     const saved = sel.value;
     sel.innerHTML = '';
-    const personas = getPU()?.personas ?? {};
+    // Пробуем несколько источников
+    const pu = getPU();
+    const personas = pu?.personas ?? pu?.user_personas ?? {};
     const keys = Object.keys(personas);
     if (!keys.length) {
         sel.innerHTML = '<option value="">— нет персон —</option>';
     } else {
-        keys.forEach(n => { const o = document.createElement('option'); o.value = o.textContent = n; sel.append(o); });
+        keys.forEach(n => {
+            const o = document.createElement('option');
+            o.value = o.textContent = n;
+            sel.append(o);
+        });
         if (saved && sel.querySelector(`option[value="${CSS.escape(saved)}"]`)) sel.value = saved;
-        // Preselect current
-        else if (getPU()?.persona) sel.value = getPU().persona;
+        else if (pu?.persona && sel.querySelector(`option[value="${CSS.escape(pu.persona)}"]`)) sel.value = pu.persona;
     }
     renderStrip('personas', sel.value, 'avga-pstrip', 'avga-pcnt');
 };
@@ -235,18 +226,20 @@ const populateChars = () => {
     const saved = sel.value;
     sel.innerHTML = '';
     const chars = getChars();
+    log('characters array length:', chars.length, '| this_chid:', getCurCharIdx());
     if (!chars.length) {
         sel.innerHTML = '<option value="">— нет персонажей —</option>';
     } else {
         chars.forEach(ch => {
+            if (!ch) return;
             const key = normAv(ch.avatar);
             const o = document.createElement('option');
             o.value = key;
             o.textContent = ch.name || key;
             sel.append(o);
         });
-        const curKey = normAv(getChars()[getCurCharIdx()]?.avatar);
-        if (curKey) sel.value = curKey;
+        const curKey = normAv(chars[getCurCharIdx()]?.avatar);
+        if (curKey && sel.querySelector(`option[value="${CSS.escape(curKey)}"]`)) sel.value = curKey;
         else if (saved && sel.querySelector(`option[value="${CSS.escape(saved)}"]`)) sel.value = saved;
     }
     renderStrip('characters', sel.value, 'avga-cstrip', 'avga-ccnt');
@@ -277,6 +270,14 @@ const wirePanel = () => {
 
     document.getElementById('avga-padd')?.addEventListener('click', () => fiP.click());
     document.getElementById('avga-cadd')?.addEventListener('click', () => fiC.click());
+
+    // Кнопка ручного обновления списков
+    const refreshBtn = document.createElement('button');
+    refreshBtn.className = 'menu_button';
+    refreshBtn.style.cssText = 'margin-top:6px;font-size:0.8em;opacity:0.7;';
+    refreshBtn.innerHTML = '🔄 Обновить списки';
+    refreshBtn.addEventListener('click', () => { populatePersonas(); populateChars(); });
+    document.getElementById('avga-panel')?.querySelector('.inline-drawer-content')?.append(refreshBtn);
 
     populatePersonas();
     populateChars();
@@ -374,8 +375,10 @@ const init = async () => {
 
     reapplyChars();
 
-    // Повторная синхронизация через 2s (ST медленно грузит список персонажей)
-    setTimeout(() => { populatePersonas(); populateChars(); }, 2000);
+    // ST грузит персонажей с задержкой — несколько попыток
+    [1000, 2500, 5000, 10000].forEach(ms =>
+        setTimeout(() => { populatePersonas(); populateChars(); }, ms)
+    );
 
     log('Loaded ✅');
 };
