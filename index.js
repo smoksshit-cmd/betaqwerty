@@ -202,10 +202,19 @@ const populatePersonas = () => {
     if (!sel) return;
     const saved = sel.value;
     sel.innerHTML = '';
-    // Пробуем несколько источников
+
     const pu = getPU();
-    const personas = pu?.personas ?? pu?.user_personas ?? {};
+    // Отладка: посмотрим что есть в power_user
+    log('power_user keys:', Object.keys(pu || {}));
+
+    // ST хранит персоны в power_user.personas (объект) или power_user.user_personas
+    const personas =
+        (pu?.personas && typeof pu.personas === 'object' && !Array.isArray(pu.personas) ? pu.personas : null) ||
+        (pu?.user_personas && typeof pu.user_personas === 'object' ? pu.user_personas : null) ||
+        {};
     const keys = Object.keys(personas);
+    log('personas found:', keys.length, keys.slice(0, 5));
+
     if (!keys.length) {
         sel.innerHTML = '<option value="">— нет персон —</option>';
     } else {
@@ -214,12 +223,12 @@ const populatePersonas = () => {
             o.value = o.textContent = n;
             sel.append(o);
         });
-        if (saved && sel.querySelector(`option[value="${CSS.escape(saved)}"]`)) sel.value = saved;
-        else if (pu?.persona && sel.querySelector(`option[value="${CSS.escape(pu.persona)}"]`)) sel.value = pu.persona;
+        const curPersona = pu?.persona;
+        if (curPersona && sel.querySelector(`option[value="${CSS.escape(curPersona)}"]`)) sel.value = curPersona;
+        else if (saved && sel.querySelector(`option[value="${CSS.escape(saved)}"]`)) sel.value = saved;
     }
     renderStrip('personas', sel.value, 'avga-pstrip', 'avga-pcnt');
 };
-
 const populateChars = () => {
     const sel = document.getElementById('avga-csel');
     if (!sel) return;
@@ -327,11 +336,56 @@ const updateZoomNav = () => {
 };
 
 const ZOOM_SEL = '.zoomed_avatar, .zoomed_avatar_content, #zoom_portrait, #character_popup';
+const detectCtxFromZoomImg = () => {
+    // Читаем src зум-картинки и сопоставляем с персонажами/персонами
+    const ZOOM_IMG_SEL = '.zoomed_avatar_content img, .zoomed_avatar img, #zoom_portrait img, #character_popup img, .zoomed_avatar_block img';
+    const zImg = document.querySelector(ZOOM_IMG_SEL);
+    const src = zImg?.src || '';
+    if (!src) return;
+
+    // Проверяем персонажей
+    const chars = getChars();
+    for (const ch of chars) {
+        if (!ch?.avatar) continue;
+        const key = normAv(ch.avatar);
+        if (src.includes(key)) {
+            _zCtx = { type: 'characters', key };
+            log('Zoom ctx from img src → character:', key);
+            return;
+        }
+    }
+
+    // Проверяем персоны
+    const personas = getPU()?.personas ?? {};
+    for (const [name, p] of Object.entries(personas)) {
+        const av = p?.avatar || '';
+        if (av && src === av) {
+            _zCtx = { type: 'personas', key: name };
+            log('Zoom ctx from img src → persona:', name);
+            return;
+        }
+    }
+
+    // Fallback: если src — base64 или не матчит — ставим текущего персонажа
+    const idx = getCurCharIdx();
+    const curKey = normAv(chars[idx]?.avatar);
+    if (curKey) {
+        _zCtx = { type: 'characters', key: curKey };
+        log('Zoom ctx fallback → current character:', curKey);
+    }
+};
+
 const attachZoomNav = () => {
     const el = document.querySelector(ZOOM_SEL);
     if (el && !el.contains(zoomNav)) {
         if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
         el.append(zoomNav);
+        // Определяем контекст из изображения в зуме
+        detectCtxFromZoomImg();
+        updateZoomNav();
+    } else if (el && el.contains(zoomNav)) {
+        // Зум уже открыт — обновляем контекст (могло смениться)
+        detectCtxFromZoomImg();
         updateZoomNav();
     }
 };
