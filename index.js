@@ -12,6 +12,7 @@ import {
 const extensionName = "arc_catalyst";
 
 let pendingNotification = null;
+let messagesSinceLastArc = 0;
 
 // ─── Settings ───────────────────────────────────────────────────────────────
 const defaultSettings = {
@@ -19,7 +20,14 @@ const defaultSettings = {
     chance: 12,
     showNotifications: true,
     selectedGenres: ["fantasy", "detective"],
-    contextMessages: 8
+    contextMessages: 8,
+    cooldownMessages: 5,
+    stats: {
+        totalTriggered: 0,
+        lastTriggered: null,
+        genreCounts: {}
+    },
+    arcHistory: []
 };
 
 function loadSettings() {
@@ -28,8 +36,14 @@ function loadSettings() {
     }
     for (const key in defaultSettings) {
         if (extension_settings[extensionName][key] === undefined) {
-            extension_settings[extensionName][key] = defaultSettings[key];
+            extension_settings[extensionName][key] = structuredClone(defaultSettings[key]);
         }
+    }
+    if (!extension_settings[extensionName].stats) {
+        extension_settings[extensionName].stats = structuredClone(defaultSettings.stats);
+    }
+    if (!extension_settings[extensionName].arcHistory) {
+        extension_settings[extensionName].arcHistory = [];
     }
 }
 
@@ -88,7 +102,6 @@ Rules:
 // ─── Extract recent chat context ─────────────────────────────────────────────
 function getRecentContext(maxMessages) {
     try {
-        // FIX: use SillyTavern.getContext() instead of the removed getContext export
         const ctx = SillyTavern.getContext();
         if (!ctx || !ctx.chat || !ctx.chat.length) return '';
 
@@ -107,6 +120,101 @@ function getRecentContext(maxMessages) {
         console.warn('[Arc Catalyst] Could not read context:', e);
         return '';
     }
+}
+
+// ─── Stats & History ─────────────────────────────────────────────────────────
+function recordArcTrigger(genres) {
+    const s = getSettings();
+
+    s.stats.totalTriggered = (s.stats.totalTriggered || 0) + 1;
+    s.stats.lastTriggered = new Date().toISOString();
+
+    if (!s.stats.genreCounts) s.stats.genreCounts = {};
+    genres.forEach(g => {
+        s.stats.genreCounts[g] = (s.stats.genreCounts[g] || 0) + 1;
+    });
+
+    const historyEntry = {
+        timestamp: new Date().toISOString(),
+        genres: genres.slice()
+    };
+    if (!s.arcHistory) s.arcHistory = [];
+    s.arcHistory.unshift(historyEntry);
+    if (s.arcHistory.length > 20) s.arcHistory.length = 20;
+
+    saveSettingsDebounced();
+    syncStats();
+}
+
+function getTopGenre() {
+    const s = getSettings();
+    const counts = s.stats.genreCounts || {};
+    let top = null, topCount = 0;
+    for (const [id, count] of Object.entries(counts)) {
+        if (count > topCount) { top = id; topCount = count; }
+    }
+    if (!top) return '—';
+    const g = genreConfig.find(x => x.id === top);
+    return g ? `${g.icon} ${g.label} (${topCount})` : top;
+}
+
+function formatTimeAgo(isoString) {
+    if (!isoString) return 'Never';
+    const diff = Date.now() - new Date(isoString).getTime();
+    const mins = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+    if (mins < 1) return 'Just now';
+    if (mins < 60) return `${mins}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    return `${days}d ago`;
+}
+
+function syncStats() {
+    const s = getSettings();
+
+    const totalEl = document.getElementById('arc_stat_total');
+    const lastEl  = document.getElementById('arc_stat_last');
+    const topEl   = document.getElementById('arc_stat_top');
+    const cdEl    = document.getElementById('arc_stat_cooldown');
+
+    if (totalEl) totalEl.textContent = s.stats.totalTriggered || 0;
+    if (lastEl)  lastEl.textContent  = formatTimeAgo(s.stats.lastTriggered);
+    if (topEl)   topEl.textContent   = getTopGenre();
+    if (cdEl) {
+        const remaining = Math.max(0, (s.cooldownMessages || 0) - messagesSinceLastArc);
+        cdEl.textContent = remaining > 0 ? `${remaining} msgs` : 'Ready';
+        cdEl.style.color = remaining > 0 ? 'var(--warning)' : 'var(--green)';
+    }
+
+    const historyList = document.getElementById('arc_history_list');
+    if (historyList) {
+        const history = s.arcHistory || [];
+        if (history.length === 0) {
+            historyList.innerHTML = '<div class="arc-history-empty">No arcs triggered yet</div>';
+        } else {
+            historyList.innerHTML = history.slice(0, 10).map(entry => {
+                const genreLabels = entry.genres.map(id => {
+                    const g = genreConfig.find(x => x.id === id);
+                    return g ? `${g.icon}${g.label}` : id;
+                }).join(' ');
+                const time = formatTimeAgo(entry.timestamp);
+                return `<div class="arc-history-entry">
+                    <span class="arc-history-genres">${genreLabels}</span>
+                    <span class="arc-history-time">${time}</span>
+                </div>`;
+            }).join('');
+        }
+    }
+}
+
+function resetStats() {
+    const s = getSettings();
+    s.stats = { totalTriggered: 0, lastTriggered: null, genreCounts: {} };
+    s.arcHistory = [];
+    messagesSinceLastArc = 0;
+    saveSettingsDebounced();
+    syncStats();
 }
 
 // ─── Notification ─────────────────────────────────────────────────────────────
@@ -145,6 +253,24 @@ function showArcNotification(genres) {
     setTimeout(close, 9000);
 }
 
+// ─── Core trigger logic (shared) ─────────────────────────────────────────────
+function triggerArc(genres, silent = false) {
+    const s = getSettings();
+    const recentContext = getRecentContext(s.contextMessages);
+    const prompt = buildDynamicArcPrompt(recentContext, genres);
+
+    setExtensionPrompt(extensionName, prompt, extension_prompt_types.IN_CHAT, 0);
+
+    recordArcTrigger(genres);
+    messagesSinceLastArc = 0;
+
+    if (!silent) {
+        pendingNotification = genres;
+    }
+
+    console.log('[Arc Catalyst] ✓ Arc prompt injected');
+}
+
 // ─── UI Panel ─────────────────────────────────────────────────────────────────
 function syncPanel() {
     const s = getSettings();
@@ -154,18 +280,24 @@ function syncPanel() {
     const value      = document.getElementById('arc_ext_value');
     const ctxSlider  = document.getElementById('arc_ext_ctx_slider');
     const ctxValue   = document.getElementById('arc_ext_ctx_value');
+    const cdSlider   = document.getElementById('arc_ext_cd_slider');
+    const cdValue    = document.getElementById('arc_ext_cd_value');
 
-    if (enabled)   enabled.checked       = s.isEnabled;
-    if (notify)    notify.checked        = s.showNotifications;
-    if (slider)    slider.value          = s.chance;
-    if (value)     value.textContent     = `${s.chance}%`;
-    if (ctxSlider) ctxSlider.value       = s.contextMessages;
-    if (ctxValue)  ctxValue.textContent  = `${s.contextMessages}`;
+    if (enabled)   enabled.checked      = s.isEnabled;
+    if (notify)    notify.checked       = s.showNotifications;
+    if (slider)    slider.value         = s.chance;
+    if (value)     value.textContent    = `${s.chance}%`;
+    if (ctxSlider) ctxSlider.value      = s.contextMessages;
+    if (ctxValue)  ctxValue.textContent = `${s.contextMessages}`;
+    if (cdSlider)  cdSlider.value       = s.cooldownMessages;
+    if (cdValue)   cdValue.textContent  = s.cooldownMessages === 0 ? 'Off' : `${s.cooldownMessages}`;
 
     genreConfig.forEach(g => {
         const el = document.querySelector(`.arc-genre-pill[data-genre="${g.id}"]`);
         if (el) el.classList.toggle('arc-genre-active', s.selectedGenres.includes(g.id));
     });
+
+    syncStats();
 }
 
 function setupPanel() {
@@ -206,6 +338,15 @@ function setupPanel() {
                         <div class="arc-genre-hint">How many recent messages the bot reads to shape the arc</div>
                     </div>
 
+                    <div class="arc-section">
+                        <div class="arc-section-label">Cooldown</div>
+                        <div class="arc-slider-row">
+                            <input type="range" id="arc_ext_cd_slider" min="0" max="30" step="1" class="neo-range-slider arc-slider">
+                            <span id="arc_ext_cd_value" class="arc-value-badge">5</span>
+                        </div>
+                        <div class="arc-genre-hint">Min messages between arc triggers (0 = no cooldown)</div>
+                    </div>
+
                     <div class="arc-section arc-toggles">
                         <label class="arc-toggle-label">
                             <input type="checkbox" id="arc_ext_enabled">
@@ -217,6 +358,43 @@ function setupPanel() {
                         </label>
                     </div>
 
+                    <div class="arc-section">
+                        <button id="arc_force_btn" class="arc-force-btn" title="Inject arc prompt into the next bot reply">
+                            ◈ Force Arc Now
+                        </button>
+                    </div>
+
+                    <div class="arc-section">
+                        <div class="arc-section-label">Statistics
+                            <button id="arc_reset_stats" class="arc-reset-btn" title="Reset all stats">↺ Reset</button>
+                        </div>
+                        <div class="arc-stats-grid">
+                            <div class="arc-stat-item">
+                                <div class="arc-stat-value" id="arc_stat_total">0</div>
+                                <div class="arc-stat-label">Total Arcs</div>
+                            </div>
+                            <div class="arc-stat-item">
+                                <div class="arc-stat-value" id="arc_stat_last">Never</div>
+                                <div class="arc-stat-label">Last Arc</div>
+                            </div>
+                            <div class="arc-stat-item">
+                                <div class="arc-stat-value" id="arc_stat_cooldown">Ready</div>
+                                <div class="arc-stat-label">Cooldown</div>
+                            </div>
+                            <div class="arc-stat-item arc-stat-wide">
+                                <div class="arc-stat-value" id="arc_stat_top">—</div>
+                                <div class="arc-stat-label">Top Genre</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="arc-section">
+                        <div class="arc-section-label">Arc History</div>
+                        <div id="arc_history_list" class="arc-history-list">
+                            <div class="arc-history-empty">No arcs triggered yet</div>
+                        </div>
+                    </div>
+
                     <div class="arc-footer-hint">Triggers after bot responds · Reads your scene · Grows an arc from what is already there</div>
                 </div>
             </div>
@@ -226,6 +404,7 @@ function setupPanel() {
     $('#extensions_settings').append(html);
     syncPanel();
 
+    // Genre pills
     $(document).on('click', '.arc-genre-pill', function () {
         const g = $(this).data('genre');
         const s = getSettings();
@@ -239,6 +418,7 @@ function setupPanel() {
         syncPanel();
     });
 
+    // Toggles
     $('#arc_ext_enabled').on('change', function () {
         getSettings().isEnabled = this.checked;
         saveSettingsDebounced();
@@ -249,6 +429,7 @@ function setupPanel() {
         saveSettingsDebounced();
     });
 
+    // Sliders
     $('#arc_ext_slider').on('input', function () {
         const v = parseInt(this.value);
         getSettings().chance = v;
@@ -261,6 +442,32 @@ function setupPanel() {
         getSettings().contextMessages = v;
         document.getElementById('arc_ext_ctx_value').textContent = `${v}`;
         saveSettingsDebounced();
+    });
+
+    $('#arc_ext_cd_slider').on('input', function () {
+        const v = parseInt(this.value);
+        getSettings().cooldownMessages = v;
+        document.getElementById('arc_ext_cd_value').textContent = v === 0 ? 'Off' : `${v}`;
+        saveSettingsDebounced();
+        syncStats();
+    });
+
+    // Force arc button
+    $('#arc_force_btn').on('click', function () {
+        const s = getSettings();
+        if (!s.selectedGenres.length) return;
+        triggerArc(s.selectedGenres, false);
+        $(this).text('✓ Arc Queued!').prop('disabled', true);
+        setTimeout(() => {
+            $(this).text('◈ Force Arc Now').prop('disabled', false);
+        }, 2000);
+    });
+
+    // Reset stats
+    $('#arc_reset_stats').on('click', function () {
+        if (confirm('Reset all Arc Catalyst statistics and history?')) {
+            resetStats();
+        }
     });
 }
 
@@ -276,28 +483,26 @@ function onUserMessageSent() {
 function onBotMessageReceived() {
     const s = getSettings();
 
+    messagesSinceLastArc++;
     setExtensionPrompt(extensionName, '', extension_prompt_types.IN_CHAT, 0);
 
     if (!s.isEnabled || !s.selectedGenres.length) return;
+
+    const cooldown = s.cooldownMessages || 0;
+    if (cooldown > 0 && messagesSinceLastArc <= cooldown) {
+        console.log(`[Arc Catalyst] Cooldown: ${messagesSinceLastArc}/${cooldown} messages`);
+        syncStats();
+        return;
+    }
 
     const roll = Math.floor(Math.random() * 100) + 1;
     console.log(`[Arc Catalyst] Roll: ${roll}, Need: ≤${s.chance}`);
 
     if (roll <= s.chance) {
-        const recentContext = getRecentContext(s.contextMessages);
-        const prompt = buildDynamicArcPrompt(recentContext, s.selectedGenres);
-
-        setExtensionPrompt(
-            extensionName,
-            prompt,
-            extension_prompt_types.IN_CHAT,
-            0
-        );
-
-        pendingNotification = s.selectedGenres;
-        console.log('[Arc Catalyst] ✓ Arc prompt injected with context:', s.contextMessages, 'messages');
+        triggerArc(s.selectedGenres, false);
     } else {
         console.log('[Arc Catalyst] ✗ No arc this time');
+        syncStats();
     }
 }
 
