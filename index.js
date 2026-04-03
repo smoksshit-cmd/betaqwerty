@@ -3,8 +3,7 @@ import {
     event_types,
     saveSettingsDebounced,
     setExtensionPrompt,
-    extension_prompt_types,
-    getContext
+    extension_prompt_types
 } from '../../../../script.js';
 import {
     extension_settings
@@ -89,7 +88,8 @@ Rules:
 // ─── Extract recent chat context ─────────────────────────────────────────────
 function getRecentContext(maxMessages) {
     try {
-        const ctx = getContext();
+        // FIX: use SillyTavern.getContext() instead of the removed getContext export
+        const ctx = SillyTavern.getContext();
         if (!ctx || !ctx.chat || !ctx.chat.length) return '';
 
         const messages = ctx.chat
