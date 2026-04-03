@@ -13,6 +13,7 @@
     gap: 8px;
 }
 
+/* ── Section headers ────────────────────────────────────────── */
 .arc-section-label {
     display: flex;
     align-items: center;
@@ -25,7 +26,61 @@
     color: var(--SmartThemeBodyColor, #fff);
 }
 
-/* Genre pills */
+.arc-section-label-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* ── Collapsible sections ───────────────────────────────────── */
+.arc-collapsible-header {
+    cursor: pointer;
+    user-select: none;
+    transition: opacity 0.15s;
+}
+
+.arc-collapsible-header:hover {
+    opacity: 0.75 !important;
+}
+
+.arc-collapse-arrow {
+    font-size: 10px;
+    opacity: 0.6;
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+}
+
+.arc-collapsible-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow: hidden;
+    max-height: 600px;
+    transition: max-height 0.3s ease, opacity 0.25s ease;
+    opacity: 1;
+}
+
+.arc-collapsible-body.arc-collapsed {
+    max-height: 0 !important;
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* ── Sub-sections inside collapsible ────────────────────────── */
+.arc-subsection {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.arc-subsection-label {
+    font-size: 11px;
+    font-weight: 600;
+    opacity: 0.35;
+    color: var(--SmartThemeBodyColor, #fff);
+}
+
+/* ── Genre pills ────────────────────────────────────────────── */
 .arc-genre-grid {
     display: flex;
     flex-wrap: wrap;
@@ -69,7 +124,7 @@
     color: var(--SmartThemeBodyColor, #fff);
 }
 
-/* Slider */
+/* ── Slider ─────────────────────────────────────────────────── */
 .arc-slider-row {
     display: flex;
     align-items: center;
@@ -94,7 +149,7 @@
     color: var(--SmartThemeBodyColor, #fff);
 }
 
-/* Toggles */
+/* ── Toggles ────────────────────────────────────────────────── */
 .arc-toggles { gap: 6px; }
 
 .arc-toggle-label {
@@ -139,8 +194,36 @@
 }
 
 .arc-force-btn:disabled {
-    opacity: 0.5;
+    opacity: 0.45;
     cursor: default;
+}
+
+/* ── Cancel Arc button ──────────────────────────────────────── */
+.arc-cancel-btn {
+    width: 100%;
+    padding: 7px 16px;
+    border-radius: 8px;
+    border: 1px solid rgba(220, 80, 80, 0.35);
+    background: rgba(220, 80, 80, 0.07);
+    color: rgba(220, 110, 110, 0.85);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    letter-spacing: 0.03em;
+    transition: all 0.2s ease;
+    text-align: center;
+    animation: arc-cancel-appear 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes arc-cancel-appear {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.arc-cancel-btn:hover {
+    background: rgba(220, 80, 80, 0.15);
+    border-color: rgba(220, 80, 80, 0.6);
+    color: rgba(240, 130, 130, 1);
 }
 
 /* ── Stats grid ─────────────────────────────────────────────── */
@@ -188,7 +271,6 @@
     font-size: 10px;
     font-weight: 600;
     letter-spacing: 0.06em;
-    text-transform: none;
     opacity: 0.35;
     color: var(--SmartThemeBodyColor, #fff);
     background: none;
@@ -196,7 +278,7 @@
     cursor: pointer;
     padding: 0;
     transition: opacity 0.2s;
-    text-decoration: none;
+    text-transform: none;
 }
 
 .arc-reset-btn:hover {
@@ -214,14 +296,8 @@
     scrollbar-color: rgba(255,255,255,0.1) transparent;
 }
 
-.arc-history-list::-webkit-scrollbar {
-    width: 4px;
-}
-
-.arc-history-list::-webkit-scrollbar-track {
-    background: transparent;
-}
-
+.arc-history-list::-webkit-scrollbar { width: 4px; }
+.arc-history-list::-webkit-scrollbar-track { background: transparent; }
 .arc-history-list::-webkit-scrollbar-thumb {
     background: rgba(255,255,255,0.1);
     border-radius: 4px;
@@ -269,6 +345,7 @@
     padding: 10px 0;
 }
 
+/* ── Footer ─────────────────────────────────────────────────── */
 .arc-footer-hint {
     font-size: 11px;
     opacity: 0.25;
