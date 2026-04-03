@@ -33,12 +33,9 @@ function loadSettings() {
     }
   }
 }
+function getSettings() { return extension_settings[extensionName]; }
 
-function getSettings() {
-  return extension_settings[extensionName];
-}
-
-// ─── Runtime state per-chat ────────────────────────────────────────────────
+// ─── Runtime state ─────────────────────────────────────────────────────────
 const chatStates = {};
 
 function getChatKey() {
@@ -64,222 +61,121 @@ function getChatState(key) {
 
 // ─── Genre config ──────────────────────────────────────────────────────────
 const genreConfig = [
-  {
-    id: 'fantasy', label: 'Fantasy', icon: '⚔️', color: '#7c6fcd',
+  { id: 'fantasy',   label: 'Fantasy',   icon: '⚔️',  color: '#7c6fcd',
     hint: 'magic, ancient mysteries, prophecies, hidden bloodlines, cursed artifacts, forgotten gods',
-    keywords: ['magic','spell','curse','artifact','prophecy','ancient','dragon','rune','enchant','wizard','sorcerer','ritual','blood','god','relic','fate']
-  },
-  {
-    id: 'detective', label: 'Detective', icon: '🔍', color: '#4a90d9',
+    keywords: ['magic','spell','curse','artifact','prophecy','ancient','dragon','rune','enchant','wizard','sorcerer','ritual','blood','god','relic','fate'] },
+  { id: 'detective', label: 'Detective', icon: '🔍',  color: '#4a90d9',
     hint: 'murder, deception, hidden motives, false alibis, evidence that points the wrong way',
-    keywords: ['clue','evidence','suspect','murder','lie','alibi','secret','motive','witness','investigate','crime','truth','guilty','hidden','mystery','discover']
-  },
-  {
-    id: 'romance', label: 'Romance', icon: '🌹', color: '#e06c8c',
+    keywords: ['clue','evidence','suspect','murder','lie','alibi','secret','motive','witness','investigate','crime','truth','guilty','hidden','mystery','discover'] },
+  { id: 'romance',   label: 'Romance',   icon: '🌹',  color: '#e06c8c',
     hint: 'forbidden feelings, misunderstandings, past that resurfaces, choices between duty and desire',
-    keywords: ['heart','love','feel','touch','close','kiss','desire','longing','forbidden','together','promise','trust','jealous','tender','hold','eyes']
-  },
-  {
-    id: 'horror', label: 'Horror', icon: '🕯️', color: '#d04040',
+    keywords: ['heart','love','feel','touch','close','kiss','desire','longing','forbidden','together','promise','trust','jealous','tender','hold','eyes'] },
+  { id: 'horror',    label: 'Horror',    icon: '🕯️', color: '#d04040',
     hint: 'wrongness that builds slowly, things that should not exist, trust eroding, no safe place',
-    keywords: ['fear','dark','shadow','wrong','scream','blood','dead','nightmare','horror','strange','monster','terror','flee','danger','pale','cold']
-  },
-  {
-    id: 'scifi', label: 'Sci-Fi', icon: '🚀', color: '#3ab8b8',
+    keywords: ['fear','dark','shadow','wrong','scream','blood','dead','nightmare','horror','strange','monster','terror','flee','danger','pale','cold'] },
+  { id: 'scifi',     label: 'Sci-Fi',    icon: '🚀',  color: '#3ab8b8',
     hint: 'technology with hidden cost, signals from impossible sources, identity and consciousness, systems failing',
-    keywords: ['system','signal','code','data','machine','artificial','network','scan','anomaly','program','fail','robot','upload','consciousness','clone','protocol']
-  },
-  {
-    id: 'political', label: 'Political', icon: '👁️', color: '#b8860b',
+    keywords: ['system','signal','code','data','machine','artificial','network','scan','anomaly','program','fail','robot','upload','consciousness','clone','protocol'] },
+  { id: 'political', label: 'Political', icon: '👁️', color: '#c49a2a',
     hint: 'power plays, shifting alliances, information as weapon, someone using the characters as pawns',
-    keywords: ['power','alliance','betray','pawn','influence','control','faction','war','rule','crown','order','spy','agent','coup','throne','scheme']
-  },
-  {
-    id: 'personal', label: 'Personal', icon: '🪞', color: '#a0785a',
+    keywords: ['power','alliance','betray','pawn','influence','control','faction','war','rule','crown','order','spy','agent','coup','throne','scheme'] },
+  { id: 'personal',  label: 'Personal',  icon: '🪞',  color: '#a0785a',
     hint: 'someone from the past, a secret about one of the characters, a debt or promise coming due',
-    keywords: ['past','memory','secret','debt','promise','truth','family','mistake','regret','real','name','before','once','knew','owe','reveal']
-  },
+    keywords: ['past','memory','secret','debt','promise','truth','family','mistake','regret','real','name','before','once','knew','owe','reveal'] },
 ];
 
-// ─── Arc level configs ─────────────────────────────────────────────────────
+// ─── Arc levels ────────────────────────────────────────────────────────────
 const arcLevelConfig = [
   {
-    level: 0, name: 'Seed', icon: '🌱', label: 'Зерно',
-    nextAfterMessages: 8,
-    buildPrompt: (ctx, gb) => `[OOC — STORY ARC CATALYST: SEED]
-${ctx}Introduce the quiet beginning of a multi-session story arc. Read the scene above and grow something from what is already there — a tension, a relationship, an unresolved thing. Do not invent it from nothing; find the crack that is already present and widen it slightly.
-
-Genre tones to draw from:
-${gb}
-
-Rules:
-- This is NOT a sudden event, fight, or twist. It is a seed — something small that carries weight.
-- It must raise at least two questions the characters cannot yet answer.
-- Do NOT resolve it or explain what it means. Leave it open.
-- It should feel as if it was always there, just now visible.
-- Weave it into the scene naturally — do not announce that something is beginning.
-- No forced action. The hook should make the player want to pull the thread, not push them into a scene.
-[/OOC]`
+    level: 0, name: 'Seed', icon: '🌱', label: 'Зерно', nextAfterMessages: 8,
+    buildPrompt: (ctx, gb) => `[OOC — STORY ARC CATALYST: SEED]\n${ctx}Introduce the quiet beginning of a multi-session story arc. Read the scene above and grow something from what is already there — a tension, a relationship, an unresolved thing. Do not invent it from nothing; find the crack that is already present and widen it slightly.\n\nGenre tones to draw from:\n${gb}\n\nRules:\n- This is NOT a sudden event, fight, or twist. It is a seed — something small that carries weight.\n- It must raise at least two questions the characters cannot yet answer.\n- Do NOT resolve it or explain what it means. Leave it open.\n- It should feel as if it was always there, just now visible.\n- Weave it into the scene naturally — do not announce that something is beginning.\n- No forced action. The hook should make the player want to pull the thread, not push them into a scene.\n[/OOC]`
   },
   {
-    level: 1, name: 'Escalation', icon: '🔥', label: 'Эскалация',
-    nextAfterMessages: 12,
-    buildPrompt: (ctx, gb) => `[OOC — STORY ARC CATALYST: ESCALATION]
-${ctx}The story arc seeded earlier is now unfolding. Push it forward. The tension should become undeniable. A choice is forming, a conflict sharpens, a relationship reaches a breaking point.
-
-Genre tones to draw from:
-${gb}
-
-Rules:
-- The arc is already running — escalate it, don't restart it.
-- Force a moment that cannot be ignored or walked away from.
-- At least one character must feel the pressure of what is developing.
-- Raise the stakes without resolving them. The climax is not yet here.
-- Do not narrate "arc is escalating" — show it through action, dialogue, or environment.
-[/OOC]`
+    level: 1, name: 'Escalation', icon: '🔥', label: 'Эскалация', nextAfterMessages: 12,
+    buildPrompt: (ctx, gb) => `[OOC — STORY ARC CATALYST: ESCALATION]\n${ctx}The story arc seeded earlier is now unfolding. Push it forward. The tension should become undeniable. A choice is forming, a conflict sharpens, a relationship reaches a breaking point.\n\nGenre tones to draw from:\n${gb}\n\nRules:\n- The arc is already running — escalate it, don't restart it.\n- Force a moment that cannot be ignored or walked away from.\n- At least one character must feel the pressure of what is developing.\n- Raise the stakes without resolving them. The climax is not yet here.\n- Do not narrate "arc is escalating" — show it through action, dialogue, or environment.\n[/OOC]`
   },
   {
-    level: 2, name: 'Climax', icon: '💥', label: 'Кульминация',
-    nextAfterMessages: null,
-    buildPrompt: (ctx, gb) => `[OOC — STORY ARC CATALYST: CLIMAX]
-${ctx}This is the moment. The arc that has been building reaches its peak. Everything seeded and escalated comes together in a single moment that demands resolution.
-
-Genre tones to draw from:
-${gb}
-
-Rules:
-- This is the emotional and narrative peak of this arc — make it land.
-- Something must change permanently: a truth revealed, a bond broken or formed, an impossible choice made.
-- The moment should feel inevitable — as if it was always going to end this way.
-- Do not hold back. This is the explosion.
-- After this moment, the arc is complete. Leave the characters changed.
-[/OOC]`
+    level: 2, name: 'Climax', icon: '💥', label: 'Кульминация', nextAfterMessages: null,
+    buildPrompt: (ctx, gb) => `[OOC — STORY ARC CATALYST: CLIMAX]\n${ctx}This is the moment. The arc that has been building reaches its peak. Everything seeded and escalated comes together in a single moment that demands resolution.\n\nGenre tones to draw from:\n${gb}\n\nRules:\n- This is the emotional and narrative peak of this arc — make it land.\n- Something must change permanently: a truth revealed, a bond broken or formed, an impossible choice made.\n- The moment should feel inevitable — as if it was always going to end this way.\n- Do not hold back. This is the explosion.\n- After this moment, the arc is complete. Leave the characters changed.\n[/OOC]`
   },
 ];
 
-// ─── Build prompt ──────────────────────────────────────────────────────────
+// ─── Core functions ────────────────────────────────────────────────────────
 function buildPrompt(level, recentContext, genres) {
-  const selectedGenres = genres.map(id => genreConfig.find(g => g.id === id)).filter(Boolean);
-  const genreBlock = selectedGenres.map(g => `- ${g.icon} ${g.label}: ${g.hint}`).join('\n');
-  const contextBlock = recentContext.trim()
-    ? `Here is what has been happening in the current scene:\n---\n${recentContext}\n---\n\n`
-    : '';
-  const cfg = arcLevelConfig[level] || arcLevelConfig[0];
-  return cfg.buildPrompt(contextBlock, genreBlock);
+  const sel = genres.map(id => genreConfig.find(g => g.id === id)).filter(Boolean);
+  const gb = sel.map(g => `- ${g.icon} ${g.label}: ${g.hint}`).join('\n');
+  const cb = recentContext.trim() ? `Here is what has been happening in the current scene:\n---\n${recentContext}\n---\n\n` : '';
+  return (arcLevelConfig[level] || arcLevelConfig[0]).buildPrompt(cb, gb);
 }
 
-// ─── Recent context ────────────────────────────────────────────────────────
 function getRecentContext(maxMessages) {
   try {
     const ctx = SillyTavern.getContext();
     if (!ctx?.chat?.length) return '';
-    const messages = ctx.chat.filter(m => !m.is_system).slice(-maxMessages);
-    return messages.map(m => {
-      const speaker = m.is_user ? (ctx.name1 || 'Player') : (ctx.name2 || 'Character');
-      const text = (m.mes || '').replace(/<[^>]*>/g, '').trim();
-      return `${speaker}: ${text}`;
+    return ctx.chat.filter(m => !m.is_system).slice(-maxMessages).map(m => {
+      const spk = m.is_user ? (ctx.name1 || 'Player') : (ctx.name2 || 'Character');
+      return `${spk}: ${(m.mes || '').replace(/<[^>]*>/g, '').trim()}`;
     }).join('\n\n');
-  } catch (e) {
-    console.warn('[Arc Catalyst] Could not read context:', e);
-    return '';
-  }
+  } catch (e) { return ''; }
 }
 
-// ─── Anti-duplicate check ──────────────────────────────────────────────────
-function isArcActiveInChat() {
-  try {
-    const ctx = SillyTavern.getContext();
-    if (!ctx?.chat?.length) return false;
-    const recent = ctx.chat.filter(m => !m.is_system).slice(-12);
-    return recent.some(m => m._arc_injected === true);
-  } catch (e) { return false; }
-}
-
-// ─── Auto-genre detection ──────────────────────────────────────────────────
-function detectGenresFromContext(maxMessages = 10) {
-  try {
-    const ctx = SillyTavern.getContext();
-    if (!ctx?.chat?.length) return [];
-    const fullText = ctx.chat
-      .filter(m => !m.is_system)
-      .slice(-maxMessages)
-      .map(m => (m.mes || '').toLowerCase().replace(/<[^>]*>/g, ''))
-      .join(' ');
-    const scores = {};
-    for (const g of genreConfig) {
-      scores[g.id] = (g.keywords || []).reduce((acc, kw) => {
-        const matches = fullText.match(new RegExp(`\\b${kw}\\b`, 'gi'));
-        return acc + (matches ? matches.length : 0);
-      }, 0);
-    }
-    return genreConfig.filter(g => scores[g.id] >= 2)
-      .sort((a, b) => scores[b.id] - scores[a.id])
-      .slice(0, 3).map(g => g.id);
-  } catch (e) { return []; }
-}
-
-// ─── Growing chance ────────────────────────────────────────────────────────
 function getCurrentChance() {
   const s = getSettings();
   if (!s.useGrowingChance) return s.chance;
   const state = getChatState(getChatKey());
-  const bonus = Math.floor(state.messagesSinceLastArc / (s.growingChanceStep || 3));
-  return Math.min(s.chance + bonus, 95);
+  return Math.min(s.chance + Math.floor(state.messagesSinceLastArc / (s.growingChanceStep || 3)), 95);
 }
 
-// ─── Inject arc ────────────────────────────────────────────────────────────
+function detectGenresFromContext(maxMessages = 10) {
+  try {
+    const ctx = SillyTavern.getContext();
+    if (!ctx?.chat?.length) return [];
+    const txt = ctx.chat.filter(m => !m.is_system).slice(-maxMessages)
+      .map(m => (m.mes || '').toLowerCase().replace(/<[^>]*>/g, '')).join(' ');
+    const scores = {};
+    for (const g of genreConfig) {
+      scores[g.id] = (g.keywords || []).reduce((acc, kw) => {
+        const m = txt.match(new RegExp(`\\b${kw}\\b`, 'gi'));
+        return acc + (m ? m.length : 0);
+      }, 0);
+    }
+    return genreConfig.filter(g => scores[g.id] >= 2)
+      .sort((a, b) => scores[b.id] - scores[a.id]).slice(0, 3).map(g => g.id);
+  } catch (e) { return []; }
+}
+
+// ─── Arc actions ───────────────────────────────────────────────────────────
 function injectArc(prompt, level, genres) {
   const key = getChatKey();
   const state = getChatState(key);
-  const s = getSettings();
   const cfg = arcLevelConfig[level];
-
   setExtensionPrompt(extensionName, prompt, extension_prompt_types.IN_CHAT, 0);
-
   state.messagesSinceLastArc = 0;
   state.messagesSinceOpenArcStart = 0;
   state.arcCount++;
   state.openArc = { level, triggeredAt: state.messageCount, genres: [...genres], prompt };
   state.arcHistory.push({
-    timestamp: new Date().toISOString(),
-    charName: key,
-    level,
-    levelName: cfg.name,
-    genres: [...genres],
+    timestamp: new Date().toISOString(), charName: key,
+    level, levelName: cfg.name, genres: [...genres],
     promptExcerpt: prompt.substring(0, 150) + '...',
   });
-
   pendingArcMark = { level, genres: [...genres] };
-
-  if (s.showNotifications) showArcNotification(genres, level);
+  if (getSettings().showNotifications) showArcNotification(genres, level);
   updatePanelUI();
 }
 
-// ─── Trigger arc ───────────────────────────────────────────────────────────
 function triggerArc(forceLevel = null, skipPreview = false) {
   const s = getSettings();
-  const key = getChatKey();
-  const state = getChatState(key);
+  const state = getChatState(getChatKey());
   const genres = s.selectedGenres?.length ? s.selectedGenres : ['fantasy'];
-
   let level = 0;
-  if (forceLevel !== null) {
-    level = forceLevel;
-  } else if (s.arcLevels && state.openArc !== null) {
-    level = Math.min(state.openArc.level + 1, 2);
-  }
-
-  const context = getRecentContext(s.contextMessages);
-  const prompt = buildPrompt(level, context, genres);
-
-  if (!skipPreview && s.previewBeforeSend) {
-    showPromptPreview(prompt, level, genres);
-    return;
-  }
+  if (forceLevel !== null) level = forceLevel;
+  else if (s.arcLevels && state.openArc !== null) level = Math.min(state.openArc.level + 1, 2);
+  const prompt = buildPrompt(level, getRecentContext(s.contextMessages), genres);
+  if (!skipPreview && s.previewBeforeSend) { showPromptPreview(prompt, level, genres); return; }
   injectArc(prompt, level, genres);
 }
 
-// ─── Close open arc ────────────────────────────────────────────────────────
 function closeOpenArc() {
   const state = getChatState(getChatKey());
   state.openArc = null;
@@ -287,27 +183,23 @@ function closeOpenArc() {
   updatePanelUI();
 }
 
-// ─── Mark bot message in DOM ───────────────────────────────────────────────
+// ─── DOM helpers ───────────────────────────────────────────────────────────
 function markLastBotMessage(level, genres) {
   try {
-    const allMessages = document.querySelectorAll('.mes[is_user="false"]');
-    if (!allMessages.length) return;
-    const lastMsg = allMessages[allMessages.length - 1];
-    if (lastMsg.querySelector('.arc-msg-indicator')) return;
-    const nameEl = lastMsg.querySelector('.name_text');
+    const all = document.querySelectorAll('.mes[is_user="false"]');
+    if (!all.length) return;
+    const last = all[all.length - 1];
+    if (last.querySelector('.arc-msg-indicator')) return;
+    const nameEl = last.querySelector('.name_text');
     if (!nameEl) return;
     const genre = genreConfig.find(g => g.id === genres[0]);
-    const color = genre?.color || 'rgba(255,255,255,0.4)';
-    const cfg = arcLevelConfig[level];
-    const indicator = document.createElement('span');
-    indicator.className = 'arc-msg-indicator';
-    indicator.title = `Arc Catalyst: ${cfg?.label || cfg?.name} injected here`;
-    indicator.textContent = '◈';
-    indicator.style.color = color;
-    nameEl.after(indicator);
-  } catch (e) {
-    console.warn('[Arc Catalyst] Could not mark message:', e);
-  }
+    const ind = document.createElement('span');
+    ind.className = 'arc-msg-indicator';
+    ind.title = `Arc Catalyst · ${arcLevelConfig[level]?.label} injected`;
+    ind.textContent = '◈';
+    ind.style.color = genre?.color || 'rgba(255,255,255,0.4)';
+    nameEl.after(ind);
+  } catch (e) { console.warn('[Arc Catalyst]', e); }
 }
 
 // ─── Notification ──────────────────────────────────────────────────────────
@@ -315,7 +207,7 @@ function showArcNotification(genres, level = 0) {
   if (pendingNotification) { pendingNotification.remove(); pendingNotification = null; }
   const cfg = arcLevelConfig[level];
   const genre = genreConfig.find(g => g.id === genres[0]);
-  const accentColor = genre?.color || 'rgba(255,255,255,0.4)';
+  const accent = genre?.color || 'rgba(255,255,255,0.5)';
   const genreLabel = genres.map(id => {
     const g = genreConfig.find(x => x.id === id);
     return g ? `${g.icon} ${g.label}` : id;
@@ -323,30 +215,31 @@ function showArcNotification(genres, level = 0) {
 
   const el = document.createElement('div');
   el.className = 'arc-notification';
-  el.style.setProperty('--arc-accent', accentColor);
+  el.style.setProperty('--arc-accent', accent);
   el.innerHTML = `
-    <div class="arc-notification-bar"></div>
-    <div class="arc-notification-inner">
-      <span class="arc-notification-icon">${cfg.icon}</span>
-      <div class="arc-notification-body">
-        <div class="arc-notification-level">${cfg.label}</div>
-        <div class="arc-notification-label">Arc Catalyst</div>
-        <div class="arc-notification-genres">${genreLabel}</div>
+    <div class="arc-notif-glow"></div>
+    <div class="arc-notif-bar"></div>
+    <div class="arc-notif-inner">
+      <div class="arc-notif-left">
+        <span class="arc-notif-lvl-icon">${cfg.icon}</span>
       </div>
-      <button class="arc-notification-close" aria-label="Close">✕</button>
+      <div class="arc-notif-body">
+        <div class="arc-notif-level-name">${cfg.label}</div>
+        <div class="arc-notif-genres">${genreLabel}</div>
+      </div>
+      <button class="arc-notif-close" aria-label="Close">✕</button>
     </div>`;
-
   document.body.appendChild(el);
   pendingNotification = el;
-  el.querySelector('.arc-notification-close').addEventListener('click', () => dismissNotification(el));
-  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('arc-notification-show')));
+  el.querySelector('.arc-notif-close').addEventListener('click', () => dismissNotification(el));
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('arc-notif-show')));
   setTimeout(() => dismissNotification(el), 7000);
 }
 
 function dismissNotification(el) {
   if (!el?.isConnected) return;
-  el.classList.remove('arc-notification-show');
-  el.classList.add('arc-notification-hide');
+  el.classList.remove('arc-notif-show');
+  el.classList.add('arc-notif-hide');
   setTimeout(() => el.remove(), 400);
   if (pendingNotification === el) pendingNotification = null;
 }
@@ -354,20 +247,24 @@ function dismissNotification(el) {
 // ─── Prompt preview ────────────────────────────────────────────────────────
 function showPromptPreview(prompt, level, genres) {
   document.getElementById('arc-preview-modal')?.remove();
+  const cfg = arcLevelConfig[level];
   const modal = document.createElement('div');
   modal.id = 'arc-preview-modal';
   modal.className = 'arc-preview-modal';
-  const cfg = arcLevelConfig[level];
   modal.innerHTML = `
     <div class="arc-preview-inner">
       <div class="arc-preview-header">
-        <span class="arc-preview-title">Превью промпта · ${cfg.label}</span>
-        <button class="arc-preview-close" aria-label="Close">✕</button>
+        <div class="arc-preview-header-left">
+          <span class="arc-preview-icon">${cfg.icon}</span>
+          <span class="arc-preview-title">Промпт · ${cfg.label}</span>
+        </div>
+        <button class="arc-preview-close">✕</button>
       </div>
+      <div class="arc-preview-hint">Можно отредактировать перед отправкой</div>
       <textarea class="arc-preview-textarea" spellcheck="false">${prompt}</textarea>
       <div class="arc-preview-actions">
-        <button class="arc-preview-send">Отправить ▶</button>
         <button class="arc-preview-cancel">Отмена</button>
+        <button class="arc-preview-send">${cfg.icon} Отправить</button>
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -386,365 +283,440 @@ function showPromptPreview(prompt, level, genres) {
 function exportArcHistory() {
   const key = getChatKey();
   const state = getChatState(key);
-  if (!state.arcHistory.length) {
-    alert('Нет истории арок для этого персонажа.');
-    return;
-  }
-  let text = `═══ ARC CATALYST — Дневник кампании ═══\n`;
-  text += `Персонаж: ${key}\n`;
-  text += `Всего арок: ${state.arcHistory.length}\nЭкспортировано: ${new Date().toLocaleString()}\n\n`;
+  if (!state.arcHistory.length) { alert('Нет истории арок для этого персонажа.'); return; }
+  let text = `═══════════════════════════════════════\n   ARC CATALYST — Дневник кампании\n═══════════════════════════════════════\n\n`;
+  text += `Персонаж : ${key}\nВсего арок: ${state.arcHistory.length}\nЭкспорт  : ${new Date().toLocaleString()}\n\n`;
   state.arcHistory.forEach((arc, i) => {
-    text += `──────────────────────────────\n`;
-    text += `Арка #${i + 1} · ${arc.levelName} (Уровень ${arc.level})\n`;
-    text += `Время: ${new Date(arc.timestamp).toLocaleString()}\n`;
-    text += `Жанры: ${arc.genres.join(', ')}\n`;
-    text += `Промпт (превью): ${arc.promptExcerpt}\n\n`;
+    text += `───────────────────────────────────────\nАрка #${i + 1}  ${arc.levelName} (ур. ${arc.level})  ${arc.icon || ''}\n`;
+    text += `Время  : ${new Date(arc.timestamp).toLocaleString()}\nЖанры  : ${arc.genres.join(', ')}\nПревью : ${arc.promptExcerpt}\n\n`;
   });
   const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
-  a.download = `arc-catalyst-${key}-${Date.now()}.txt`;
-  a.click();
+  a.href = url; a.download = `arc-${key}-${Date.now()}.txt`; a.click();
   URL.revokeObjectURL(url);
 }
 
-// ─── Auto-genre UI update ──────────────────────────────────────────────────
-function runAutoGenreDetection() {
-  const suggested = detectGenresFromContext();
-  const hint = document.getElementById('arc-auto-genre-hint');
-  document.querySelectorAll('.arc-genre-pill').forEach(pill => {
-    const id = pill.dataset.genre;
-    pill.classList.toggle('arc-genre-suggested', suggested.includes(id));
-  });
-  if (hint) {
-    hint.textContent = suggested.length
-      ? `✦ Авто-жанр: ${suggested.map(id => genreConfig.find(g => g.id === id)?.icon || id).join(' ')} подходят под тон чата`
-      : '';
-  }
-}
-
-// ─── Update panel UI ───────────────────────────────────────────────────────
+// ─── Panel UI update ───────────────────────────────────────────────────────
 function updatePanelUI() {
   const key = getChatKey();
   const state = getChatState(key);
   const s = getSettings();
+  const chance = getCurrentChance();
 
-  const chanceEl = document.getElementById('arc-current-chance');
-  if (chanceEl) chanceEl.textContent = getCurrentChance() + '%';
+  // ── Chance ring ──
+  const ring = document.getElementById('arc-chance-ring-val');
+  if (ring) {
+    const r = 20, circ = 2 * Math.PI * r;
+    const pct = Math.min(chance, 100) / 100;
+    ring.style.strokeDashoffset = circ * (1 - pct);
+    ring.style.stroke = chance >= 50 ? '#e06c8c' : chance >= 25 ? '#c49a2a' : '#4a90d9';
+  }
+  const chanceNum = document.getElementById('arc-chance-num');
+  if (chanceNum) chanceNum.textContent = chance + '%';
 
-  const trackerEl = document.getElementById('arc-session-tracker');
-  if (trackerEl) trackerEl.textContent = `${key} · Сообщений: ${state.messageCount} · Арок: ${state.arcCount}`;
+  // ── Chance label ──
+  const chanceLabel = document.getElementById('arc-chance-subtext');
+  if (chanceLabel) {
+    chanceLabel.textContent = s.useGrowingChance
+      ? `+1% каждые ${s.growingChanceStep} сообщений`
+      : 'фиксированный';
+  }
 
-  const arcStatusEl = document.getElementById('arc-open-status');
-  if (arcStatusEl) {
+  // ── Session tracker ──
+  const tracker = document.getElementById('arc-session-tracker');
+  if (tracker) tracker.textContent = `${state.messageCount} сообщ · ${state.arcCount} арок`;
+
+  // ── Arc level progress ──
+  const prog = document.getElementById('arc-level-progress');
+  if (prog) {
+    const lvl = state.openArc?.level ?? -1;
+    prog.querySelectorAll('.arc-lvl-node').forEach(node => {
+      const nl = parseInt(node.dataset.level);
+      node.classList.toggle('arc-lvl-done', nl < lvl);
+      node.classList.toggle('arc-lvl-active', nl === lvl);
+      node.classList.toggle('arc-lvl-pending', nl > lvl);
+    });
+    prog.querySelectorAll('.arc-lvl-line').forEach(line => {
+      const ll = parseInt(line.dataset.after);
+      line.classList.toggle('arc-lvl-line-done', ll < lvl);
+    });
+  }
+
+  // ── Status card ──
+  const card = document.getElementById('arc-status-card');
+  if (card) {
     if (state.openArc !== null) {
       const cfg = arcLevelConfig[state.openArc.level];
-      arcStatusEl.innerHTML = `<span class="arc-open-badge">${cfg.icon} ${cfg.label} активна</span>
-        <button class="arc-close-btn" id="arc-close-arc-btn">Закрыть арку ✓</button>`;
+      const g = genreConfig.find(x => x.id === state.openArc.genres[0]);
+      card.style.setProperty('--arc-card-accent', g?.color || 'rgba(255,255,255,0.3)');
+      card.classList.add('arc-status-card-active');
+      const inner = card.querySelector('.arc-status-card-inner');
+      if (inner) inner.innerHTML = `
+        <span class="arc-status-card-icon">${cfg.icon}</span>
+        <div class="arc-status-card-info">
+          <span class="arc-status-card-name">${cfg.label}</span>
+          <span class="arc-status-card-genres">${state.openArc.genres.map(id => {
+            const gx = genreConfig.find(x => x.id === id); return gx ? `${gx.icon}${gx.label}` : id;
+          }).join(' · ')}</span>
+        </div>
+        <button class="arc-status-close-btn" id="arc-close-arc-btn" title="Закрыть арку">✓ Закрыть</button>`;
       document.getElementById('arc-close-arc-btn')?.addEventListener('click', closeOpenArc);
     } else {
-      arcStatusEl.innerHTML = `<span class="arc-no-arc">Нет активной арки</span>`;
+      card.classList.remove('arc-status-card-active');
+      const inner = card.querySelector('.arc-status-card-inner');
+      if (inner) inner.innerHTML = `<span class="arc-status-idle">◌ нет активной арки</span>`;
     }
   }
 
-  const sliderLabel = document.getElementById('arc-chance-label');
-  if (sliderLabel) {
-    sliderLabel.textContent = s.useGrowingChance
-      ? `Базовый шанс: ${s.chance}% (+1% каждые ${s.growingChanceStep} сообщений)`
-      : `Фиксированный шанс: ${s.chance}%`;
+  // ── Header status dot ──
+  const dot = document.getElementById('arc-header-dot');
+  if (dot) {
+    dot.className = 'arc-header-dot ' + (state.openArc !== null ? 'arc-dot-active' : 'arc-dot-idle');
+    const g = state.openArc ? genreConfig.find(x => x.id === state.openArc.genres[0]) : null;
+    dot.style.background = g?.color || '';
   }
 
-  if (s.autoGenre) runAutoGenreDetection();
+  // ── Auto-genre hints ──
+  if (s.autoGenre) {
+    const suggested = detectGenresFromContext();
+    document.querySelectorAll('.arc-genre-pill').forEach(pill => {
+      pill.classList.toggle('arc-genre-suggested', suggested.includes(pill.dataset.genre));
+    });
+    const hint = document.getElementById('arc-auto-genre-hint');
+    if (hint) hint.textContent = suggested.length
+      ? `✦ подходят: ${suggested.map(id => genreConfig.find(g => g.id === id)?.icon || '').join(' ')}`
+      : '';
+  }
 }
 
-// ─── Main event handler ────────────────────────────────────────────────────
+// ─── Main event ────────────────────────────────────────────────────────────
 function onMessageReceived() {
   const s = getSettings();
   if (!s.isEnabled) return;
-
   const key = getChatKey();
   const state = getChatState(key);
   state.messageCount++;
   state.messagesSinceLastArc++;
   if (state.openArc !== null) state.messagesSinceOpenArcStart++;
 
-  // Clear previous arc prompt
   setExtensionPrompt(extensionName, '', extension_prompt_types.IN_CHAT, 0);
 
-  // Mark last bot message if arc was pending
   if (pendingArcMark) {
-    const mark = pendingArcMark;
-    pendingArcMark = null;
-    setTimeout(() => markLastBotMessage(mark.level, mark.genres), 600);
+    const m = pendingArcMark; pendingArcMark = null;
+    setTimeout(() => markLastBotMessage(m.level, m.genres), 600);
   }
 
-  // Check arc escalation if arc is open
   if (s.arcLevels && state.openArc !== null) {
     const cfg = arcLevelConfig[state.openArc.level];
     if (cfg.nextAfterMessages && state.messagesSinceOpenArcStart >= cfg.nextAfterMessages) {
-      if (Math.random() * 100 < 40) {
-        triggerArc(null, false);
-        updatePanelUI();
-        return;
-      }
+      if (Math.random() * 100 < 40) { triggerArc(null, false); updatePanelUI(); return; }
     }
-    // If at climax, wait for manual close
-    if (state.openArc.level >= 2) {
-      updatePanelUI();
-      return;
-    }
-    // Anti-duplicate: arc already open, don't start new one
-    if (s.antiDuplicate) {
-      updatePanelUI();
-      return;
-    }
+    if (state.openArc.level >= 2) { updatePanelUI(); return; }
+    if (s.antiDuplicate) { updatePanelUI(); return; }
   }
 
-  // Roll for new arc
-  const currentChance = getCurrentChance();
-  if (Math.random() * 100 < currentChance) {
-    triggerArc(0, false);
-  }
-
+  if (Math.random() * 100 < getCurrentChance()) triggerArc(0, false);
   updatePanelUI();
 }
 
-// ─── Hotkey Ctrl+Shift+A ───────────────────────────────────────────────────
-document.addEventListener('keydown', (e) => {
+// ─── Hotkey ────────────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
   if (e.ctrlKey && e.shiftKey && e.key === 'A') {
     e.preventDefault();
     if (!getSettings().isEnabled) return;
     triggerArc(null, true);
-    const flash = document.createElement('div');
-    flash.className = 'arc-hotkey-flash';
-    flash.textContent = '⌨️ Arc triggered · Ctrl+Shift+A';
-    document.body.appendChild(flash);
-    requestAnimationFrame(() => flash.classList.add('arc-hotkey-flash-show'));
-    setTimeout(() => {
-      flash.classList.remove('arc-hotkey-flash-show');
-      setTimeout(() => flash.remove(), 300);
-    }, 2000);
+    const f = document.createElement('div');
+    f.className = 'arc-hotkey-flash';
+    f.textContent = '⌨️ Arc Catalyst · Ctrl+Shift+A';
+    document.body.appendChild(f);
+    requestAnimationFrame(() => f.classList.add('arc-hotkey-show'));
+    setTimeout(() => { f.classList.remove('arc-hotkey-show'); setTimeout(() => f.remove(), 300); }, 2200);
   }
 });
 
 // ─── Settings HTML ─────────────────────────────────────────────────────────
 function buildSettingsHTML() {
+  const levelNodes = arcLevelConfig.map((cfg, i) => `
+    <div class="arc-lvl-node arc-lvl-pending" data-level="${i}" title="${cfg.label}">
+      <span class="arc-lvl-node-icon">${cfg.icon}</span>
+    </div>
+    ${i < arcLevelConfig.length - 1 ? `<div class="arc-lvl-line" data-after="${i}"></div>` : ''}
+  `).join('');
+
+  const genrePills = genreConfig.map(g => `
+    <button class="arc-genre-pill" data-genre="${g.id}" style="--genre-color:${g.color}" title="${g.hint}">
+      <span class="arc-pill-icon">${g.icon}</span>
+      <span class="arc-pill-label">${g.label}</span>
+    </button>`).join('');
+
   return `
-<div class="arc-section">
-  <span class="arc-section-label">Жанры</span>
-  <div class="arc-genre-grid" id="arc-genre-grid">
-    ${genreConfig.map(g => `
-      <button class="arc-genre-pill" data-genre="${g.id}" style="--genre-color:${g.color}">
-        <span>${g.icon}</span><span>${g.label}</span>
-      </button>`).join('')}
-  </div>
-  <div class="arc-genre-hint" id="arc-auto-genre-hint"></div>
-</div>
+<div class="arc-panel">
 
-<div class="arc-section">
-  <span class="arc-section-label">Шанс арки</span>
-  <div class="arc-slider-row">
-    <input type="range" class="arc-slider" id="arc-chance-slider" min="1" max="50" step="1">
-    <span class="arc-value-badge" id="arc-chance-badge">12%</span>
+  <!-- ── Header ── -->
+  <div class="arc-panel-header">
+    <div class="arc-panel-header-left">
+      <span class="arc-header-dot arc-dot-idle" id="arc-header-dot"></span>
+      <span class="arc-panel-title">Arc Catalyst</span>
+    </div>
+    <div class="arc-panel-header-right">
+      <span class="arc-stats-chip" id="arc-session-tracker">0 сообщ · 0 арок</span>
+    </div>
   </div>
-  <div class="arc-ctx-label" id="arc-chance-label">Базовый шанс</div>
-  <div class="arc-slider-row" style="margin-top:6px">
-    <label class="arc-toggle-label" style="flex:1">
-      <input type="checkbox" id="arc-growing-chance-toggle">
-      <span class="arc-toggle-text">Нарастающий шанс</span>
-    </label>
-    <span class="arc-value-badge" id="arc-current-chance" title="Текущий шанс с учётом нарастания">—</span>
-  </div>
-  <div class="arc-slider-row" id="arc-growing-step-row" style="display:none">
-    <span class="arc-ctx-label">+1% каждые</span>
-    <input type="range" class="arc-slider" id="arc-step-slider" min="1" max="10" step="1">
-    <span class="arc-value-badge" id="arc-step-badge">3</span>
-    <span class="arc-ctx-label">сообщений</span>
-  </div>
-</div>
 
-<div class="arc-section">
-  <span class="arc-section-label">Контекст</span>
-  <div class="arc-slider-row">
-    <input type="range" class="arc-slider" id="arc-ctx-slider" min="4" max="30" step="2">
-    <span class="arc-value-badge" id="arc-ctx-badge">8</span>
+  <!-- ── Arc level progress bar ── -->
+  <div class="arc-level-progress" id="arc-level-progress">
+    ${levelNodes}
   </div>
-  <div class="arc-ctx-label">последних сообщений читает Arc Catalyst</div>
-</div>
 
-<div class="arc-section arc-toggles">
-  <span class="arc-section-label">Опции</span>
-  <label class="arc-toggle-label">
-    <input type="checkbox" id="arc-notifications-toggle">
-    <span class="arc-toggle-text">Показывать уведомления</span>
-  </label>
-  <label class="arc-toggle-label">
-    <input type="checkbox" id="arc-levels-toggle">
-    <span class="arc-toggle-text">Три уровня арки (Зерно → Эскалация → Кульминация)</span>
-  </label>
-  <label class="arc-toggle-label">
-    <input type="checkbox" id="arc-antidupe-toggle">
-    <span class="arc-toggle-text">Анти-дубль — пропустить если арка уже идёт</span>
-  </label>
-  <label class="arc-toggle-label">
-    <input type="checkbox" id="arc-autogenre-toggle">
-    <span class="arc-toggle-text">Авто-жанр — подсвечивать жанры по тексту чата</span>
-  </label>
-  <label class="arc-toggle-label">
-    <input type="checkbox" id="arc-preview-toggle">
-    <span class="arc-toggle-text">Превью промпта перед отправкой</span>
-  </label>
-</div>
-
-<div class="arc-section">
-  <span class="arc-section-label">Статус арки</span>
-  <div id="arc-open-status" class="arc-open-status">
-    <span class="arc-no-arc">Нет активной арки</span>
+  <!-- ── Status card ── -->
+  <div class="arc-status-card" id="arc-status-card">
+    <div class="arc-status-card-inner">
+      <span class="arc-status-idle">◌ нет активной арки</span>
+    </div>
   </div>
-  <div id="arc-session-tracker" class="arc-session-tracker">Сообщений: 0 · Арок: 0</div>
-</div>
 
-<div class="arc-section">
-  <span class="arc-section-label">Действия</span>
-  <div class="arc-actions-row">
-    <button class="arc-action-btn" id="arc-manual-trigger-btn">▶ Запустить арку</button>
-    <button class="arc-action-btn arc-secondary" id="arc-preview-btn">👁 Превью промпта</button>
-    <button class="arc-action-btn arc-secondary" id="arc-export-btn">📄 Экспорт дневника</button>
+  <!-- ── Quick actions ── -->
+  <div class="arc-quick-bar">
+    <button class="arc-btn-primary" id="arc-manual-trigger-btn">
+      <span>▶</span> Запустить арку
+    </button>
+    <button class="arc-btn-icon" id="arc-preview-btn" title="Превью промпта">👁</button>
+    <button class="arc-btn-icon" id="arc-export-btn" title="Экспорт дневника">📄</button>
   </div>
-</div>
 
-<div class="arc-footer-hint">Ctrl+Shift+A — быстрый запуск · ◈ отмечает сообщения с инжектом</div>`;
+  <!-- ══ ЖАНРЫ ══ -->
+  <div class="arc-sub open" id="arc-sub-genres">
+    <button class="arc-sub-header" data-target="arc-sub-genres">
+      <span class="arc-sub-icon">🎭</span>
+      <span class="arc-sub-title">Жанры</span>
+      <span class="arc-sub-hint" id="arc-auto-genre-hint"></span>
+      <span class="arc-sub-chevron">›</span>
+    </button>
+    <div class="arc-sub-body"><div>
+      <div class="arc-genre-grid" id="arc-genre-grid">
+        ${genrePills}
+      </div>
+    </div></div>
+  </div>
+
+  <!-- ══ ВЕРОЯТНОСТЬ ══ -->
+  <div class="arc-sub" id="arc-sub-chance">
+    <button class="arc-sub-header" data-target="arc-sub-chance">
+      <span class="arc-sub-icon">🎲</span>
+      <span class="arc-sub-title">Вероятность</span>
+      <span class="arc-sub-chevron">›</span>
+    </button>
+    <div class="arc-sub-body"><div>
+      <div class="arc-chance-display">
+        <svg class="arc-ring" viewBox="0 0 50 50">
+          <circle class="arc-ring-bg" cx="25" cy="25" r="20"/>
+          <circle class="arc-ring-val" id="arc-chance-ring-val" cx="25" cy="25" r="20"
+            style="stroke-dasharray:${2 * Math.PI * 20};stroke-dashoffset:${2 * Math.PI * 20}"/>
+        </svg>
+        <div class="arc-chance-info">
+          <span class="arc-chance-num" id="arc-chance-num">12%</span>
+          <span class="arc-chance-sub" id="arc-chance-subtext">текущий шанс</span>
+        </div>
+      </div>
+      <div class="arc-field">
+        <label class="arc-field-label">Базовый шанс</label>
+        <div class="arc-slider-row">
+          <input type="range" class="arc-slider" id="arc-chance-slider" min="1" max="50" step="1">
+          <span class="arc-badge" id="arc-chance-badge">12%</span>
+        </div>
+      </div>
+      <div class="arc-field">
+        <label class="arc-toggle-label">
+          <input type="checkbox" id="arc-growing-chance-toggle">
+          <span class="arc-toggle-text">Нарастающий шанс</span>
+        </label>
+      </div>
+      <div class="arc-field arc-growing-step" id="arc-growing-step-row" style="display:none">
+        <label class="arc-field-label">+1% каждые N сообщений</label>
+        <div class="arc-slider-row">
+          <input type="range" class="arc-slider" id="arc-step-slider" min="1" max="10" step="1">
+          <span class="arc-badge" id="arc-step-badge">3</span>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- ══ МЕХАНИКА АРОК ══ -->
+  <div class="arc-sub" id="arc-sub-mechanics">
+    <button class="arc-sub-header" data-target="arc-sub-mechanics">
+      <span class="arc-sub-icon">⚙️</span>
+      <span class="arc-sub-title">Механика арок</span>
+      <span class="arc-sub-chevron">›</span>
+    </button>
+    <div class="arc-sub-body"><div>
+      <div class="arc-levels-cards">
+        ${arcLevelConfig.map(cfg => `
+          <div class="arc-level-card">
+            <span class="arc-level-card-icon">${cfg.icon}</span>
+            <div class="arc-level-card-info">
+              <span class="arc-level-card-name">${cfg.label}</span>
+              ${cfg.nextAfterMessages ? `<span class="arc-level-card-hint">~${cfg.nextAfterMessages} сообщений до следующего</span>` : '<span class="arc-level-card-hint">финал арки</span>'}
+            </div>
+          </div>`).join('')}
+      </div>
+      <div class="arc-field" style="margin-top:8px">
+        <label class="arc-toggle-label">
+          <input type="checkbox" id="arc-levels-toggle">
+          <span class="arc-toggle-text">Три уровня арки</span>
+        </label>
+      </div>
+      <div class="arc-field">
+        <label class="arc-toggle-label">
+          <input type="checkbox" id="arc-antidupe-toggle">
+          <span class="arc-toggle-text">Анти-дубль</span>
+        </label>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- ══ УМНЫЕ ФИЧИ ══ -->
+  <div class="arc-sub" id="arc-sub-smart">
+    <button class="arc-sub-header" data-target="arc-sub-smart">
+      <span class="arc-sub-icon">🧠</span>
+      <span class="arc-sub-title">Умные фичи</span>
+      <span class="arc-sub-chevron">›</span>
+    </button>
+    <div class="arc-sub-body"><div>
+      <div class="arc-field">
+        <label class="arc-field-label">Контекст для анализа</label>
+        <div class="arc-slider-row">
+          <input type="range" class="arc-slider" id="arc-ctx-slider" min="4" max="30" step="2">
+          <span class="arc-badge" id="arc-ctx-badge">8</span>
+        </div>
+        <span class="arc-field-hint">последних сообщений</span>
+      </div>
+      <div class="arc-field">
+        <label class="arc-toggle-label">
+          <input type="checkbox" id="arc-autogenre-toggle">
+          <span class="arc-toggle-text">Авто-жанр</span>
+        </label>
+        <span class="arc-field-hint">подсвечивает жанры по тону чата</span>
+      </div>
+      <div class="arc-field">
+        <label class="arc-toggle-label">
+          <input type="checkbox" id="arc-notifications-toggle">
+          <span class="arc-toggle-text">Уведомления</span>
+        </label>
+      </div>
+      <div class="arc-field">
+        <label class="arc-toggle-label">
+          <input type="checkbox" id="arc-preview-toggle">
+          <span class="arc-toggle-text">Превью промпта перед отправкой</span>
+        </label>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="arc-panel-footer">Ctrl+Shift+A — быстрый запуск · ◈ метка в чате</div>
+</div>`;
 }
 
 // ─── Init UI ───────────────────────────────────────────────────────────────
 function initUI() {
   const s = getSettings();
 
+  // Collapsible sections
+  document.querySelectorAll('.arc-sub-header').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const sub = btn.closest('.arc-sub');
+      sub.classList.toggle('open');
+    });
+  });
+
   // Genre pills
-  const genreGrid = document.getElementById('arc-genre-grid');
-  if (genreGrid) {
-    genreGrid.querySelectorAll('.arc-genre-pill').forEach(pill => {
+  const grid = document.getElementById('arc-genre-grid');
+  if (grid) {
+    grid.querySelectorAll('.arc-genre-pill').forEach(pill => {
       if (s.selectedGenres.includes(pill.dataset.genre)) pill.classList.add('arc-genre-active');
       pill.addEventListener('click', () => {
         pill.classList.toggle('arc-genre-active');
-        s.selectedGenres = [...genreGrid.querySelectorAll('.arc-genre-pill.arc-genre-active')].map(p => p.dataset.genre);
+        s.selectedGenres = [...grid.querySelectorAll('.arc-genre-pill.arc-genre-active')].map(p => p.dataset.genre);
         saveSettingsDebounced();
       });
     });
   }
 
   // Chance slider
-  const chanceSlider = document.getElementById('arc-chance-slider');
-  const chanceBadge = document.getElementById('arc-chance-badge');
-  if (chanceSlider) {
-    chanceSlider.value = s.chance;
-    chanceBadge.textContent = s.chance + '%';
-    chanceSlider.addEventListener('input', () => {
-      s.chance = parseInt(chanceSlider.value);
-      chanceBadge.textContent = s.chance + '%';
-      updatePanelUI();
-      saveSettingsDebounced();
-    });
+  const cs = document.getElementById('arc-chance-slider');
+  const cb = document.getElementById('arc-chance-badge');
+  if (cs) {
+    cs.value = s.chance; cb.textContent = s.chance + '%';
+    cs.addEventListener('input', () => { s.chance = parseInt(cs.value); cb.textContent = s.chance + '%'; updatePanelUI(); saveSettingsDebounced(); });
   }
 
-  // Growing chance toggle
-  const growingToggle = document.getElementById('arc-growing-chance-toggle');
-  const growingStepRow = document.getElementById('arc-growing-step-row');
-  if (growingToggle) {
-    growingToggle.checked = s.useGrowingChance;
-    growingStepRow.style.display = s.useGrowingChance ? 'flex' : 'none';
-    growingToggle.addEventListener('change', () => {
-      s.useGrowingChance = growingToggle.checked;
-      growingStepRow.style.display = s.useGrowingChance ? 'flex' : 'none';
-      updatePanelUI();
-      saveSettingsDebounced();
-    });
+  // Growing chance
+  const gt = document.getElementById('arc-growing-chance-toggle');
+  const gr = document.getElementById('arc-growing-step-row');
+  if (gt) {
+    gt.checked = s.useGrowingChance;
+    gr.style.display = s.useGrowingChance ? 'flex' : 'none';
+    gt.addEventListener('change', () => { s.useGrowingChance = gt.checked; gr.style.display = gt.checked ? 'flex' : 'none'; updatePanelUI(); saveSettingsDebounced(); });
   }
 
   // Step slider
-  const stepSlider = document.getElementById('arc-step-slider');
-  const stepBadge = document.getElementById('arc-step-badge');
-  if (stepSlider) {
-    stepSlider.value = s.growingChanceStep;
-    stepBadge.textContent = s.growingChanceStep;
-    stepSlider.addEventListener('input', () => {
-      s.growingChanceStep = parseInt(stepSlider.value);
-      stepBadge.textContent = s.growingChanceStep;
-      updatePanelUI();
-      saveSettingsDebounced();
-    });
+  const ss = document.getElementById('arc-step-slider');
+  const sb = document.getElementById('arc-step-badge');
+  if (ss) {
+    ss.value = s.growingChanceStep; sb.textContent = s.growingChanceStep;
+    ss.addEventListener('input', () => { s.growingChanceStep = parseInt(ss.value); sb.textContent = s.growingChanceStep; updatePanelUI(); saveSettingsDebounced(); });
   }
 
-  // Context slider
-  const ctxSlider = document.getElementById('arc-ctx-slider');
-  const ctxBadge = document.getElementById('arc-ctx-badge');
-  if (ctxSlider) {
-    ctxSlider.value = s.contextMessages;
-    ctxBadge.textContent = s.contextMessages;
-    ctxSlider.addEventListener('input', () => {
-      s.contextMessages = parseInt(ctxSlider.value);
-      ctxBadge.textContent = s.contextMessages;
-      saveSettingsDebounced();
-    });
+  // Ctx slider
+  const xs = document.getElementById('arc-ctx-slider');
+  const xb = document.getElementById('arc-ctx-badge');
+  if (xs) {
+    xs.value = s.contextMessages; xb.textContent = s.contextMessages;
+    xs.addEventListener('input', () => { s.contextMessages = parseInt(xs.value); xb.textContent = s.contextMessages; saveSettingsDebounced(); });
   }
 
   // Checkboxes
-  const toggleMap = {
-    'arc-notifications-toggle': 'showNotifications',
-    'arc-levels-toggle': 'arcLevels',
-    'arc-antidupe-toggle': 'antiDuplicate',
-    'arc-autogenre-toggle': 'autoGenre',
-    'arc-preview-toggle': 'previewBeforeSend',
-  };
-  for (const [id, key] of Object.entries(toggleMap)) {
+  [
+    ['arc-notifications-toggle', 'showNotifications'],
+    ['arc-levels-toggle', 'arcLevels'],
+    ['arc-antidupe-toggle', 'antiDuplicate'],
+    ['arc-autogenre-toggle', 'autoGenre'],
+    ['arc-preview-toggle', 'previewBeforeSend'],
+  ].forEach(([id, key]) => {
     const el = document.getElementById(id);
-    if (el) {
-      el.checked = s[key];
-      el.addEventListener('change', () => { s[key] = el.checked; saveSettingsDebounced(); updatePanelUI(); });
-    }
-  }
+    if (!el) return;
+    el.checked = s[key];
+    el.addEventListener('change', () => { s[key] = el.checked; saveSettingsDebounced(); updatePanelUI(); });
+  });
 
-  // Action buttons
+  // Buttons
   document.getElementById('arc-manual-trigger-btn')?.addEventListener('click', () => triggerArc(null, false));
-
   document.getElementById('arc-preview-btn')?.addEventListener('click', () => {
     const genres = s.selectedGenres?.length ? s.selectedGenres : ['fantasy'];
     const state = getChatState(getChatKey());
     let level = 0;
-    if (s.arcLevels && state.openArc !== null) level = Math.min(state.openArc.level + 1, 2);
-    const prompt = buildPrompt(level, getRecentContext(s.contextMessages), genres);
-    showPromptPreview(prompt, level, genres);
+    if (s.arcLevels && state.openArc) level = Math.min(state.openArc.level + 1, 2);
+    showPromptPreview(buildPrompt(level, getRecentContext(s.contextMessages), genres), level, genres);
   });
-
   document.getElementById('arc-export-btn')?.addEventListener('click', exportArcHistory);
 
   updatePanelUI();
 }
 
-// ─── jQuery bootstrap ──────────────────────────────────────────────────────
+// ─── Bootstrap ─────────────────────────────────────────────────────────────
 jQuery(async () => {
   loadSettings();
-
-  const html = `
+  $('#extensions_settings').append(`
     <div class="arc_catalyst_settings">
       <div class="inline-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
           <b>◈ Arc Catalyst</b>
           <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div>
-        <div class="inline-drawer-content">
-          ${buildSettingsHTML()}
-        </div>
+        <div class="inline-drawer-content">${buildSettingsHTML()}</div>
       </div>
-    </div>`;
-
-  $('#extensions_settings').append(html);
+    </div>`);
   initUI();
-
   eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
-  eventSource.on(event_types.CHAT_CHANGED, () => {
-    updatePanelUI();
-    if (getSettings().autoGenre) setTimeout(runAutoGenreDetection, 500);
-  });
+  eventSource.on(event_types.CHAT_CHANGED, () => { updatePanelUI(); });
 });
