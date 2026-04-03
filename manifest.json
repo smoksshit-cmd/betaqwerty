@@ -1,9 +1,10 @@
 {
-    "display_name": "Arc Catalyst",
+    "display_name": "NPC Manager",
     "js": "index.js",
     "css": "style.css",
-    "author": "custom",
+    "author": "npc_manager",
     "version": "1.0.0",
-    "homePage": "",
-    "auto_update": false
+    "loading_order": 10,
+    "requires": [],
+    "optional": []
 }
