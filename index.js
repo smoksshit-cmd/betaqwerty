@@ -13,6 +13,7 @@ const extensionName = "arc_catalyst";
 
 let pendingNotification = null;
 let messagesSinceLastArc = 0;
+let arcActive = false;
 
 // ─── Settings ───────────────────────────────────────────────────────────────
 const defaultSettings = {
@@ -53,19 +54,19 @@ function getSettings() {
 
 // ─── Genre config ────────────────────────────────────────────────────────────
 const genreConfig = [
-    { id: 'fantasy',   label: 'Fantasy',   icon: '⚔️',
+    { id: 'fantasy',   label: 'Фэнтези',     icon: '⚔️',
       hint: 'magic, ancient mysteries, prophecies, hidden bloodlines, cursed artifacts, forgotten gods' },
-    { id: 'detective', label: 'Detective',  icon: '🔍',
+    { id: 'detective', label: 'Детектив',     icon: '🔍',
       hint: 'murder, deception, hidden motives, false alibis, evidence that points the wrong way' },
-    { id: 'romance',   label: 'Romance',    icon: '🌹',
+    { id: 'romance',   label: 'Романтика',    icon: '🌹',
       hint: 'forbidden feelings, misunderstandings, past that resurfaces, choices between duty and desire' },
-    { id: 'horror',    label: 'Horror',     icon: '🕯️',
+    { id: 'horror',    label: 'Хоррор',       icon: '🕯️',
       hint: 'wrongness that builds slowly, things that should not exist, trust eroding, no safe place' },
-    { id: 'scifi',     label: 'Sci-Fi',     icon: '🚀',
+    { id: 'scifi',     label: 'Фантастика',   icon: '🚀',
       hint: 'technology with hidden cost, signals from impossible sources, identity and consciousness, systems failing' },
-    { id: 'political', label: 'Political',  icon: '👁️',
+    { id: 'political', label: 'Политика',     icon: '👁️',
       hint: 'power plays, shifting alliances, information as weapon, someone using the characters as pawns' },
-    { id: 'personal',  label: 'Personal',   icon: '🪞',
+    { id: 'personal',  label: 'Личное',       icon: '🪞',
       hint: 'someone from the past, a secret about one of the characters, a debt or promise coming due' },
 ];
 
@@ -111,8 +112,8 @@ function getRecentContext(maxMessages) {
 
         return messages.map(m => {
             const speaker = m.is_user
-                ? (ctx.name1 || 'Player')
-                : (ctx.name2 || 'Character');
+                ? (ctx.name1 || 'Игрок')
+                : (ctx.name2 || 'Персонаж');
             const text = (m.mes || '').replace(/<[^>]*>/g, '').trim();
             return `${speaker}: ${text}`;
         }).join('\n\n');
@@ -159,15 +160,15 @@ function getTopGenre() {
 }
 
 function formatTimeAgo(isoString) {
-    if (!isoString) return 'Never';
+    if (!isoString) return 'Никогда';
     const diff = Date.now() - new Date(isoString).getTime();
     const mins = Math.floor(diff / 60000);
     const hours = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
-    if (mins < 1) return 'Just now';
-    if (mins < 60) return `${mins}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    return `${days}d ago`;
+    if (mins < 1) return 'Только что';
+    if (mins < 60) return `${mins} мин назад`;
+    if (hours < 24) return `${hours} ч назад`;
+    return `${days} дн назад`;
 }
 
 function syncStats() {
@@ -183,7 +184,7 @@ function syncStats() {
     if (topEl)   topEl.textContent   = getTopGenre();
     if (cdEl) {
         const remaining = Math.max(0, (s.cooldownMessages || 0) - messagesSinceLastArc);
-        cdEl.textContent = remaining > 0 ? `${remaining} msgs` : 'Ready';
+        cdEl.textContent = remaining > 0 ? `${remaining} сообщ.` : 'Готово';
         cdEl.style.color = remaining > 0 ? 'var(--warning)' : 'var(--green)';
     }
 
@@ -191,13 +192,13 @@ function syncStats() {
     if (historyList) {
         const history = s.arcHistory || [];
         if (history.length === 0) {
-            historyList.innerHTML = '<div class="arc-history-empty">No arcs triggered yet</div>';
+            historyList.innerHTML = '<div class="arc-history-empty">Арки ещё не запускались</div>';
         } else {
             historyList.innerHTML = history.slice(0, 10).map(entry => {
                 const genreLabels = entry.genres.map(id => {
                     const g = genreConfig.find(x => x.id === id);
-                    return g ? `${g.icon}${g.label}` : id;
-                }).join(' ');
+                    return g ? `${g.icon} ${g.label}` : id;
+                }).join(' · ');
                 const time = formatTimeAgo(entry.timestamp);
                 return `<div class="arc-history-entry">
                     <span class="arc-history-genres">${genreLabels}</span>
@@ -215,6 +216,24 @@ function resetStats() {
     messagesSinceLastArc = 0;
     saveSettingsDebounced();
     syncStats();
+}
+
+// ─── Arc active state ─────────────────────────────────────────────────────────
+function setArcActive(active) {
+    arcActive = active;
+    const cancelBtn = document.getElementById('arc_cancel_btn');
+    const forceBtn  = document.getElementById('arc_force_btn');
+    if (!cancelBtn || !forceBtn) return;
+
+    if (active) {
+        cancelBtn.style.display = 'block';
+        forceBtn.textContent = '◈ Арка в очереди...';
+        forceBtn.disabled = true;
+    } else {
+        cancelBtn.style.display = 'none';
+        forceBtn.textContent = '◈ Запустить арку сейчас';
+        forceBtn.disabled = false;
+    }
 }
 
 // ─── Notification ─────────────────────────────────────────────────────────────
@@ -253,22 +272,37 @@ function showArcNotification(genres) {
     setTimeout(close, 9000);
 }
 
-// ─── Core trigger logic (shared) ─────────────────────────────────────────────
-function triggerArc(genres, silent = false) {
+// ─── Core trigger logic ───────────────────────────────────────────────────────
+function triggerArc(genres) {
     const s = getSettings();
     const recentContext = getRecentContext(s.contextMessages);
     const prompt = buildDynamicArcPrompt(recentContext, genres);
 
     setExtensionPrompt(extensionName, prompt, extension_prompt_types.IN_CHAT, 0);
-
     recordArcTrigger(genres);
     messagesSinceLastArc = 0;
+    pendingNotification = genres;
+    setArcActive(true);
 
-    if (!silent) {
-        pendingNotification = genres;
-    }
+    console.log('[Arc Catalyst] ✓ Арка добавлена в очередь');
+}
 
-    console.log('[Arc Catalyst] ✓ Arc prompt injected');
+function cancelArc() {
+    setExtensionPrompt(extensionName, '', extension_prompt_types.IN_CHAT, 0);
+    pendingNotification = null;
+    setArcActive(false);
+    console.log('[Arc Catalyst] ✗ Арка отменена');
+}
+
+// ─── Collapsible sections ─────────────────────────────────────────────────────
+function setupCollapsible() {
+    $(document).on('click', '.arc-collapsible-header', function () {
+        const targetId = $(this).data('target');
+        const body = document.getElementById(targetId);
+        if (!body) return;
+        const isCollapsed = body.classList.toggle('arc-collapsed');
+        $(this).find('.arc-collapse-arrow').text(isCollapsed ? '▸' : '▾');
+    });
 }
 
 // ─── UI Panel ─────────────────────────────────────────────────────────────────
@@ -290,7 +324,7 @@ function syncPanel() {
     if (ctxSlider) ctxSlider.value      = s.contextMessages;
     if (ctxValue)  ctxValue.textContent = `${s.contextMessages}`;
     if (cdSlider)  cdSlider.value       = s.cooldownMessages;
-    if (cdValue)   cdValue.textContent  = s.cooldownMessages === 0 ? 'Off' : `${s.cooldownMessages}`;
+    if (cdValue)   cdValue.textContent  = s.cooldownMessages === 0 ? 'Откл' : `${s.cooldownMessages}`;
 
     genreConfig.forEach(g => {
         const el = document.querySelector(`.arc-genre-pill[data-genre="${g.id}"]`);
@@ -314,95 +348,130 @@ function setupPanel() {
                 </div>
                 <div class="inline-drawer-content">
 
+                    <!-- Жанры -->
                     <div class="arc-section">
-                        <div class="arc-section-label">Genre Tones</div>
+                        <div class="arc-section-label">Жанровые тона</div>
                         <div class="arc-genre-grid">${genrePills}</div>
-                        <div class="arc-genre-hint">Bot reads your scene and invents an arc seed in these tones</div>
+                        <div class="arc-genre-hint">Бот читает сцену и создаёт зерно арки в этих тонах</div>
                     </div>
 
+                    <!-- Настройки (сворачиваемые) -->
                     <div class="arc-section">
-                        <div class="arc-section-label">Trigger Chance</div>
-                        <div class="arc-slider-row">
-                            <input type="range" id="arc_ext_slider" min="0" max="100" step="1" class="neo-range-slider arc-slider">
-                            <span id="arc_ext_value" class="arc-value-badge">12%</span>
+                        <div class="arc-section-label arc-collapsible-header" data-target="arc_settings_body">
+                            Настройки
+                            <span class="arc-collapse-arrow">▾</span>
+                        </div>
+                        <div id="arc_settings_body" class="arc-collapsible-body">
+
+                            <div class="arc-subsection">
+                                <div class="arc-subsection-label">Шанс срабатывания</div>
+                                <div class="arc-slider-row">
+                                    <input type="range" id="arc_ext_slider" min="0" max="100" step="1" class="neo-range-slider arc-slider">
+                                    <span id="arc_ext_value" class="arc-value-badge">12%</span>
+                                </div>
+                            </div>
+
+                            <div class="arc-subsection">
+                                <div class="arc-subsection-label">Глубина контекста</div>
+                                <div class="arc-slider-row">
+                                    <input type="range" id="arc_ext_ctx_slider" min="2" max="20" step="1" class="neo-range-slider arc-slider">
+                                    <span id="arc_ext_ctx_value" class="arc-value-badge">8</span>
+                                    <span class="arc-ctx-label">сообщ.</span>
+                                </div>
+                                <div class="arc-genre-hint">Сколько последних сообщений бот читает для формирования арки</div>
+                            </div>
+
+                            <div class="arc-subsection">
+                                <div class="arc-subsection-label">Перезарядка</div>
+                                <div class="arc-slider-row">
+                                    <input type="range" id="arc_ext_cd_slider" min="0" max="30" step="1" class="neo-range-slider arc-slider">
+                                    <span id="arc_ext_cd_value" class="arc-value-badge">5</span>
+                                </div>
+                                <div class="arc-genre-hint">Мин. сообщений между триггерами арки (0 = без перезарядки)</div>
+                            </div>
+
+                            <div class="arc-subsection arc-toggles">
+                                <label class="arc-toggle-label">
+                                    <input type="checkbox" id="arc_ext_enabled">
+                                    <span class="arc-toggle-text">Включить Arc Catalyst</span>
+                                </label>
+                                <label class="arc-toggle-label">
+                                    <input type="checkbox" id="arc_ext_notify">
+                                    <span class="arc-toggle-text">Показывать уведомления</span>
+                                </label>
+                            </div>
+
                         </div>
                     </div>
 
+                    <!-- Управление -->
                     <div class="arc-section">
-                        <div class="arc-section-label">Context Depth</div>
-                        <div class="arc-slider-row">
-                            <input type="range" id="arc_ext_ctx_slider" min="2" max="20" step="1" class="neo-range-slider arc-slider">
-                            <span id="arc_ext_ctx_value" class="arc-value-badge">8</span>
-                            <span class="arc-ctx-label">messages</span>
-                        </div>
-                        <div class="arc-genre-hint">How many recent messages the bot reads to shape the arc</div>
-                    </div>
-
-                    <div class="arc-section">
-                        <div class="arc-section-label">Cooldown</div>
-                        <div class="arc-slider-row">
-                            <input type="range" id="arc_ext_cd_slider" min="0" max="30" step="1" class="neo-range-slider arc-slider">
-                            <span id="arc_ext_cd_value" class="arc-value-badge">5</span>
-                        </div>
-                        <div class="arc-genre-hint">Min messages between arc triggers (0 = no cooldown)</div>
-                    </div>
-
-                    <div class="arc-section arc-toggles">
-                        <label class="arc-toggle-label">
-                            <input type="checkbox" id="arc_ext_enabled">
-                            <span class="arc-toggle-text">Enable Arc Catalyst</span>
-                        </label>
-                        <label class="arc-toggle-label">
-                            <input type="checkbox" id="arc_ext_notify">
-                            <span class="arc-toggle-text">Show Notifications</span>
-                        </label>
-                    </div>
-
-                    <div class="arc-section">
-                        <button id="arc_force_btn" class="arc-force-btn" title="Inject arc prompt into the next bot reply">
-                            ◈ Force Arc Now
+                        <button id="arc_force_btn" class="arc-force-btn">
+                            ◈ Запустить арку сейчас
+                        </button>
+                        <button id="arc_cancel_btn" class="arc-cancel-btn" style="display:none">
+                            ✕ Отменить арку
                         </button>
                     </div>
 
+                    <!-- Статистика (сворачиваемая) -->
                     <div class="arc-section">
-                        <div class="arc-section-label">Statistics
-                            <button id="arc_reset_stats" class="arc-reset-btn" title="Reset all stats">↺ Reset</button>
+                        <div class="arc-section-label arc-collapsible-header" data-target="arc_stats_body">
+                            Статистика
+                            <span class="arc-section-label-actions">
+                                <button id="arc_reset_stats" class="arc-reset-btn">↺ Сброс</button>
+                                <span class="arc-collapse-arrow">▾</span>
+                            </span>
                         </div>
-                        <div class="arc-stats-grid">
-                            <div class="arc-stat-item">
-                                <div class="arc-stat-value" id="arc_stat_total">0</div>
-                                <div class="arc-stat-label">Total Arcs</div>
-                            </div>
-                            <div class="arc-stat-item">
-                                <div class="arc-stat-value" id="arc_stat_last">Never</div>
-                                <div class="arc-stat-label">Last Arc</div>
-                            </div>
-                            <div class="arc-stat-item">
-                                <div class="arc-stat-value" id="arc_stat_cooldown">Ready</div>
-                                <div class="arc-stat-label">Cooldown</div>
-                            </div>
-                            <div class="arc-stat-item arc-stat-wide">
-                                <div class="arc-stat-value" id="arc_stat_top">—</div>
-                                <div class="arc-stat-label">Top Genre</div>
+                        <div id="arc_stats_body" class="arc-collapsible-body">
+                            <div class="arc-stats-grid">
+                                <div class="arc-stat-item">
+                                    <div class="arc-stat-value" id="arc_stat_total">0</div>
+                                    <div class="arc-stat-label">Всего арок</div>
+                                </div>
+                                <div class="arc-stat-item">
+                                    <div class="arc-stat-value" id="arc_stat_last">Никогда</div>
+                                    <div class="arc-stat-label">Последняя</div>
+                                </div>
+                                <div class="arc-stat-item">
+                                    <div class="arc-stat-value" id="arc_stat_cooldown">Готово</div>
+                                    <div class="arc-stat-label">Перезарядка</div>
+                                </div>
+                                <div class="arc-stat-item arc-stat-wide">
+                                    <div class="arc-stat-value" id="arc_stat_top">—</div>
+                                    <div class="arc-stat-label">Топ жанр</div>
+                                </div>
                             </div>
                         </div>
                     </div>
 
+                    <!-- История арок (сворачиваемая) -->
                     <div class="arc-section">
-                        <div class="arc-section-label">Arc History</div>
-                        <div id="arc_history_list" class="arc-history-list">
-                            <div class="arc-history-empty">No arcs triggered yet</div>
+                        <div class="arc-section-label arc-collapsible-header" data-target="arc_history_body">
+                            История арок
+                            <span class="arc-collapse-arrow">▾</span>
+                        </div>
+                        <div id="arc_history_body" class="arc-collapsible-body arc-collapsed">
+                            <div id="arc_history_list" class="arc-history-list">
+                                <div class="arc-history-empty">Арки ещё не запускались</div>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="arc-footer-hint">Triggers after bot responds · Reads your scene · Grows an arc from what is already there</div>
+                    <div class="arc-footer-hint">Срабатывает после ответа бота · Читает сцену · Развивает арку из того, что уже есть</div>
                 </div>
             </div>
         </div>
     `;
 
     $('#extensions_settings').append(html);
+
+    // Sync collapsed arrow for history (starts collapsed)
+    const historyHeader = document.querySelector('[data-target="arc_history_body"] .arc-collapse-arrow');
+    if (historyHeader) historyHeader.textContent = '▸';
+
     syncPanel();
+    setupCollapsible();
 
     // Genre pills
     $(document).on('click', '.arc-genre-pill', function () {
@@ -447,25 +516,27 @@ function setupPanel() {
     $('#arc_ext_cd_slider').on('input', function () {
         const v = parseInt(this.value);
         getSettings().cooldownMessages = v;
-        document.getElementById('arc_ext_cd_value').textContent = v === 0 ? 'Off' : `${v}`;
+        document.getElementById('arc_ext_cd_value').textContent = v === 0 ? 'Откл' : `${v}`;
         saveSettingsDebounced();
         syncStats();
     });
 
-    // Force arc button
+    // Force arc
     $('#arc_force_btn').on('click', function () {
         const s = getSettings();
-        if (!s.selectedGenres.length) return;
-        triggerArc(s.selectedGenres, false);
-        $(this).text('✓ Arc Queued!').prop('disabled', true);
-        setTimeout(() => {
-            $(this).text('◈ Force Arc Now').prop('disabled', false);
-        }, 2000);
+        if (!s.selectedGenres.length || arcActive) return;
+        triggerArc(s.selectedGenres);
     });
 
-    // Reset stats
-    $('#arc_reset_stats').on('click', function () {
-        if (confirm('Reset all Arc Catalyst statistics and history?')) {
+    // Cancel arc
+    $('#arc_cancel_btn').on('click', function () {
+        cancelArc();
+    });
+
+    // Reset stats — stop click from bubbling to collapsible header
+    $('#arc_reset_stats').on('click', function (e) {
+        e.stopPropagation();
+        if (confirm('Сбросить всю статистику и историю Arc Catalyst?')) {
             resetStats();
         }
     });
@@ -474,10 +545,13 @@ function setupPanel() {
 // ─── Event hooks ──────────────────────────────────────────────────────────────
 function onUserMessageSent() {
     const s = getSettings();
-    if (pendingNotification && s.showNotifications) {
-        showArcNotification(pendingNotification);
+    if (arcActive) {
+        if (s.showNotifications && pendingNotification) {
+            showArcNotification(pendingNotification);
+        }
+        pendingNotification = null;
+        setArcActive(false);
     }
-    pendingNotification = null;
 }
 
 function onBotMessageReceived() {
@@ -485,33 +559,34 @@ function onBotMessageReceived() {
 
     messagesSinceLastArc++;
     setExtensionPrompt(extensionName, '', extension_prompt_types.IN_CHAT, 0);
+    setArcActive(false);
 
     if (!s.isEnabled || !s.selectedGenres.length) return;
 
     const cooldown = s.cooldownMessages || 0;
     if (cooldown > 0 && messagesSinceLastArc <= cooldown) {
-        console.log(`[Arc Catalyst] Cooldown: ${messagesSinceLastArc}/${cooldown} messages`);
+        console.log(`[Arc Catalyst] Перезарядка: ${messagesSinceLastArc}/${cooldown}`);
         syncStats();
         return;
     }
 
     const roll = Math.floor(Math.random() * 100) + 1;
-    console.log(`[Arc Catalyst] Roll: ${roll}, Need: ≤${s.chance}`);
+    console.log(`[Arc Catalyst] Бросок: ${roll}, нужно: ≤${s.chance}`);
 
     if (roll <= s.chance) {
-        triggerArc(s.selectedGenres, false);
+        triggerArc(s.selectedGenres);
     } else {
-        console.log('[Arc Catalyst] ✗ No arc this time');
+        console.log('[Arc Catalyst] ✗ Арка не сработала');
         syncStats();
     }
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 jQuery(async () => {
-    console.log('[Arc Catalyst] Loading...');
+    console.log('[Arc Catalyst] Загрузка...');
     loadSettings();
     setupPanel();
     eventSource.on(event_types.MESSAGE_SENT, onUserMessageSent);
     eventSource.on(event_types.MESSAGE_RECEIVED, onBotMessageReceived);
-    console.log('[Arc Catalyst] Ready. Context-aware arc generation active.');
+    console.log('[Arc Catalyst] Готово. Контекстная генерация арок активна.');
 });
