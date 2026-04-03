@@ -1,8 +1,5 @@
 {
-    "display_name": "Avatar Gallery",
-    "loading_order": 10,
-    "requires": [],
-    "optional": [],
+    "display_name": "Arc Catalyst",
     "js": "index.js",
     "css": "style.css",
     "author": "custom",
