@@ -1,442 +1,312 @@
-// ═══════════════════════════════════════════════════════════════════
-// Avatar Gallery v1.3 — Avatar Gallery for SillyTavern
-// ═══════════════════════════════════════════════════════════════════
-import { extension_settings } from '../../../extensions.js';
-import { saveSettingsDebounced, eventSource, event_types, characters, this_chid } from '../../../../script.js';
+import {
+    eventSource,
+    event_types,
+    saveSettingsDebounced,
+    setExtensionPrompt,
+    extension_prompt_types,
+    getContext
+} from '../../../../script.js';
+import {
+    extension_settings
+} from '../../../extensions.js';
 
-const EXT = 'avatarGallery';
-const log = (...a) => console.log('[AvatarGallery]', ...a);
+const extensionName = "arc_catalyst";
 
-// power_user недоступен как экспорт — берём из window
-const pu = () => window.power_user ?? {};
+let pendingNotification = null;
 
-// ── Хранилище (base64 в extension_settings) ──────────────────────
-if (!extension_settings[EXT]) extension_settings[EXT] = {};
-const S = extension_settings[EXT];
-if (!S.personas)   S.personas   = {};
-if (!S.characters) S.characters = {};
-const save = () => saveSettingsDebounced();
-
-const getGal = (type, key) => {
-    if (!S[type][key]) S[type][key] = { images: [], current: 0 };
-    return S[type][key];
+// ─── Settings ───────────────────────────────────────────────────────────────
+const defaultSettings = {
+    isEnabled: true,
+    chance: 12,
+    showNotifications: true,
+    selectedGenres: ["fantasy", "detective"],
+    contextMessages: 8
 };
 
-// ── Утилиты ──────────────────────────────────────────────────────
-const toB64 = file => new Promise((ok, err) => {
-    const r = new FileReader();
-    r.onload  = () => ok(r.result);
-    r.onerror = err;
-    r.readAsDataURL(file);
-});
-
-const normAv    = s => (s || '').split('/').pop().split('?')[0];
-const getChars  = () => Array.isArray(characters) ? characters : [];
-const curCharKey = () => normAv(getChars()[this_chid ?? -1]?.avatar);
-
-// ── Читаем список персон ─────────────────────────────────────────
-// Структура может отличаться в разных версиях ST
-const getPersonaMap = () => {
-    const raw = pu().personas ?? {};
-    if (Array.isArray(raw)) {
-        const out = {};
-        raw.forEach(item => { if (item?.name) out[item.name] = item.avatar || ''; });
-        return out;
+function loadSettings() {
+    if (!extension_settings[extensionName]) {
+        extension_settings[extensionName] = structuredClone(defaultSettings);
     }
-    return raw;
-};
-
-// ── Apply avatar to DOM ──────────────────────────────────────────
-const reapplyChars = () => {
-    for (const [k, d] of Object.entries(S.characters)) {
-        if (!d._cur) continue;
-        document.querySelectorAll(`img[src*="${k}"]`).forEach(img => {
-            if (img.src !== d._cur) img.src = d._cur;
-        });
-    }
-};
-
-const reapplyPersonas = () => {
-    const curPersona = pu().persona;
-    for (const [k, d] of Object.entries(S.personas)) {
-        if (!d._cur || k !== curPersona) continue;
-        document.querySelectorAll('.mes[is_user="true"] .mes_img, .mes[is_user="true"] img.avatar')
-            .forEach(img => { if (img.src !== d._cur) img.src = d._cur; });
-    }
-};
-
-const applyPersona = (key, src) => {
-    try {
-        getGal('personas', key)._cur = src;
-        const pm    = getPersonaMap();
-        const entry = pm[key];
-        if (typeof entry === 'object' && entry !== null) {
-            entry.avatar = src;
-        } else if (typeof entry === 'string') {
-            pu().personas[key] = src;
+    for (const key in defaultSettings) {
+        if (extension_settings[extensionName][key] === undefined) {
+            extension_settings[extensionName][key] = defaultSettings[key];
         }
-        save();
-        document.querySelectorAll('.mes[is_user="true"] .mes_img, .mes[is_user="true"] img.avatar')
-            .forEach(i => { i.src = src; });
-        document.querySelectorAll(`[title="${CSS.escape(key)}"] img, [data-persona="${CSS.escape(key)}"] img`)
-            .forEach(i => { i.src = src; });
-    } catch(e) { log('applyPersona error', e); }
-};
+    }
+}
 
-const applyChar = (key, src) => {
-    getGal('characters', key)._cur = src;
-    save();
-    reapplyChars();
-};
+function getSettings() {
+    return extension_settings[extensionName];
+}
 
-// ── Файловый инпут ───────────────────────────────────────────────
-const mkInput = cb => {
-    const fi = Object.assign(document.createElement('input'), {
-        type: 'file', accept: 'image/*', multiple: true
-    });
-    fi.style.display = 'none';
-    document.body.append(fi);
-    fi.addEventListener('change', async () => {
-        for (const f of fi.files) await cb(await toB64(f));
-        fi.value = '';
-    });
-    return fi;
-};
+// ─── Genre config ────────────────────────────────────────────────────────────
+const genreConfig = [
+    { id: 'fantasy',   label: 'Fantasy',   icon: '⚔️',
+      hint: 'magic, ancient mysteries, prophecies, hidden bloodlines, cursed artifacts, forgotten gods' },
+    { id: 'detective', label: 'Detective',  icon: '🔍',
+      hint: 'murder, deception, hidden motives, false alibis, evidence that points the wrong way' },
+    { id: 'romance',   label: 'Romance',    icon: '🌹',
+      hint: 'forbidden feelings, misunderstandings, past that resurfaces, choices between duty and desire' },
+    { id: 'horror',    label: 'Horror',     icon: '🕯️',
+      hint: 'wrongness that builds slowly, things that should not exist, trust eroding, no safe place' },
+    { id: 'scifi',     label: 'Sci-Fi',     icon: '🚀',
+      hint: 'technology with hidden cost, signals from impossible sources, identity and consciousness, systems failing' },
+    { id: 'political', label: 'Political',  icon: '👁️',
+      hint: 'power plays, shifting alliances, information as weapon, someone using the characters as pawns' },
+    { id: 'personal',  label: 'Personal',   icon: '🪞',
+      hint: 'someone from the past, a secret about one of the characters, a debt or promise coming due' },
+];
 
-// ══════════════════════════════════════════════════════════════════
-// HTML ПАНЕЛИ НАСТРОЕК
-// ══════════════════════════════════════════════════════════════════
-const PANEL_HTML = `
-<div id="avga-panel">
-    <div class="inline-drawer">
-        <div class="inline-drawer-toggle inline-drawer-header">
-            <b>Avatar Gallery</b>
-            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+// ─── Build injected prompt ───────────────────────────────────────────────────
+function buildDynamicArcPrompt(recentContext, genres) {
+    const selectedGenres = genres
+        .map(id => genreConfig.find(g => g.id === id))
+        .filter(Boolean);
+
+    const genreBlock = selectedGenres
+        .map(g => `- ${g.icon} ${g.label}: ${g.hint}`)
+        .join('\n');
+
+    const contextBlock = recentContext.trim()
+        ? `Here is what has been happening in the current scene:\n---\n${recentContext}\n---\n\n`
+        : '';
+
+    return `[OOC — STORY ARC CATALYST]
+${contextBlock}Introduce the quiet beginning of a multi-session story arc. Read the scene above and grow something from what is already there — a tension, a relationship, an unresolved thing. Do not invent it from nothing; find the crack that is already present and widen it slightly.
+
+Genre tones to draw from:
+${genreBlock}
+
+Rules:
+- This is NOT a sudden event, fight, or twist. It is a seed — something small that carries weight.
+- It must raise at least two questions the characters cannot yet answer.
+- Do NOT resolve it or explain what it means. Leave it open.
+- It should feel as if it was always there, just now visible.
+- Weave it into the scene naturally — do not announce that something is beginning.
+- No forced action. The hook should make the player want to pull the thread, not push them into a scene.
+[/OOC]`;
+}
+
+// ─── Extract recent chat context ─────────────────────────────────────────────
+function getRecentContext(maxMessages) {
+    try {
+        const ctx = getContext();
+        if (!ctx || !ctx.chat || !ctx.chat.length) return '';
+
+        const messages = ctx.chat
+            .filter(m => !m.is_system)
+            .slice(-maxMessages);
+
+        return messages.map(m => {
+            const speaker = m.is_user
+                ? (ctx.name1 || 'Player')
+                : (ctx.name2 || 'Character');
+            const text = (m.mes || '').replace(/<[^>]*>/g, '').trim();
+            return `${speaker}: ${text}`;
+        }).join('\n\n');
+    } catch (e) {
+        console.warn('[Arc Catalyst] Could not read context:', e);
+        return '';
+    }
+}
+
+// ─── Notification ─────────────────────────────────────────────────────────────
+function showArcNotification(genres) {
+    const notification = document.createElement('div');
+    notification.className = 'arc-notification';
+
+    const genreLabel = genres
+        .map(id => {
+            const g = genreConfig.find(x => x.id === id);
+            return g ? `${g.icon} ${g.label}` : id;
+        })
+        .join('  ');
+
+    notification.innerHTML = `
+        <div class="arc-notification-bar"></div>
+        <div class="arc-notification-inner">
+            <div class="arc-notification-icon">◈</div>
+            <div class="arc-notification-body">
+                <div class="arc-notification-label">Arc Catalyst</div>
+                <div class="arc-notification-genres">${genreLabel}</div>
+            </div>
+            <div class="arc-notification-close">✕</div>
         </div>
-        <div class="inline-drawer-content">
+    `;
 
-            <div class="avga-section">
-                <div class="avga-stitle">🧑 Персоны</div>
-                <div class="avga-row">
-                    <label class="avga-lbl">Персона</label>
-                    <select id="avga-psel" class="text_pole"></select>
-                    <button id="avga-pref" class="menu_button" title="Обновить список">↺</button>
+    document.body.appendChild(notification);
+    requestAnimationFrame(() => notification.classList.add('arc-notification-show'));
+
+    const close = () => {
+        notification.classList.remove('arc-notification-show');
+        notification.classList.add('arc-notification-hide');
+        setTimeout(() => notification.remove(), 400);
+    };
+    notification.querySelector('.arc-notification-close').addEventListener('click', close);
+    setTimeout(close, 9000);
+}
+
+// ─── UI Panel ─────────────────────────────────────────────────────────────────
+function syncPanel() {
+    const s = getSettings();
+    const enabled    = document.getElementById('arc_ext_enabled');
+    const notify     = document.getElementById('arc_ext_notify');
+    const slider     = document.getElementById('arc_ext_slider');
+    const value      = document.getElementById('arc_ext_value');
+    const ctxSlider  = document.getElementById('arc_ext_ctx_slider');
+    const ctxValue   = document.getElementById('arc_ext_ctx_value');
+
+    if (enabled)   enabled.checked       = s.isEnabled;
+    if (notify)    notify.checked        = s.showNotifications;
+    if (slider)    slider.value          = s.chance;
+    if (value)     value.textContent     = `${s.chance}%`;
+    if (ctxSlider) ctxSlider.value       = s.contextMessages;
+    if (ctxValue)  ctxValue.textContent  = `${s.contextMessages}`;
+
+    genreConfig.forEach(g => {
+        const el = document.querySelector(`.arc-genre-pill[data-genre="${g.id}"]`);
+        if (el) el.classList.toggle('arc-genre-active', s.selectedGenres.includes(g.id));
+    });
+}
+
+function setupPanel() {
+    const genrePills = genreConfig.map(g =>
+        `<button class="arc-genre-pill" data-genre="${g.id}" title="${g.hint}">${g.icon} ${g.label}</button>`
+    ).join('');
+
+    const html = `
+        <div class="arc_catalyst_settings">
+            <div class="inline-drawer">
+                <div class="inline-drawer-toggle inline-drawer-header">
+                    <b>◈ Arc Catalyst</b>
+                    <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
                 </div>
-                <div id="avga-pstrip" class="avga-strip"></div>
-                <div class="avga-row">
-                    <button id="avga-padd" class="menu_button menu_button_icon" title="Добавить изображения">
-                        <i class="fa-solid fa-plus"></i>
-                    </button>
-                    <span id="avga-pcnt" class="avga-cnt"></span>
+                <div class="inline-drawer-content">
+
+                    <div class="arc-section">
+                        <div class="arc-section-label">Genre Tones</div>
+                        <div class="arc-genre-grid">${genrePills}</div>
+                        <div class="arc-genre-hint">Bot reads your scene and invents an arc seed in these tones</div>
+                    </div>
+
+                    <div class="arc-section">
+                        <div class="arc-section-label">Trigger Chance</div>
+                        <div class="arc-slider-row">
+                            <input type="range" id="arc_ext_slider" min="0" max="100" step="1" class="neo-range-slider arc-slider">
+                            <span id="arc_ext_value" class="arc-value-badge">12%</span>
+                        </div>
+                    </div>
+
+                    <div class="arc-section">
+                        <div class="arc-section-label">Context Depth</div>
+                        <div class="arc-slider-row">
+                            <input type="range" id="arc_ext_ctx_slider" min="2" max="20" step="1" class="neo-range-slider arc-slider">
+                            <span id="arc_ext_ctx_value" class="arc-value-badge">8</span>
+                            <span class="arc-ctx-label">messages</span>
+                        </div>
+                        <div class="arc-genre-hint">How many recent messages the bot reads to shape the arc</div>
+                    </div>
+
+                    <div class="arc-section arc-toggles">
+                        <label class="arc-toggle-label">
+                            <input type="checkbox" id="arc_ext_enabled">
+                            <span class="arc-toggle-text">Enable Arc Catalyst</span>
+                        </label>
+                        <label class="arc-toggle-label">
+                            <input type="checkbox" id="arc_ext_notify">
+                            <span class="arc-toggle-text">Show Notifications</span>
+                        </label>
+                    </div>
+
+                    <div class="arc-footer-hint">Triggers after bot responds · Reads your scene · Grows an arc from what is already there</div>
                 </div>
             </div>
-
-            <hr class="avga-divider" />
-
-            <div class="avga-section">
-                <div class="avga-stitle">🤖 Персонажи</div>
-                <div class="avga-row">
-                    <label class="avga-lbl">Персонаж</label>
-                    <select id="avga-csel" class="text_pole"></select>
-                    <button id="avga-cref" class="menu_button" title="Обновить список">↺</button>
-                </div>
-                <div id="avga-cstrip" class="avga-strip"></div>
-                <div class="avga-row">
-                    <button id="avga-cadd" class="menu_button menu_button_icon" title="Добавить изображения">
-                        <i class="fa-solid fa-plus"></i>
-                    </button>
-                    <span id="avga-ccnt" class="avga-cnt"></span>
-                </div>
-            </div>
-
         </div>
-    </div>
-</div>`;
+    `;
 
-// ── Рендер полосы миниатюр ────────────────────────────────────────
-const renderStrip = (type, key, stripId, cntId) => {
-    const strip = document.getElementById(stripId);
-    const cnt   = document.getElementById(cntId);
-    if (!strip) return;
-    strip.innerHTML = '';
-    if (!key) { if (cnt) cnt.textContent = ''; return; }
-    const g = getGal(type, key);
-    if (cnt) cnt.textContent = g.images.length ? `${g.images.length}` : '';
-    if (!g.images.length) {
-        strip.innerHTML = '<div class="avga-empty">Нет изображений — нажмите +</div>';
-        return;
-    }
-    g.images.forEach((src, i) => {
-        const cell = document.createElement('div');
-        cell.className = 'avga-thumb' + (i === g.current ? ' avga-active' : '');
-        cell.title     = String(i + 1) + (i === g.current ? ' ✓' : '');
+    $('#extensions_settings').append(html);
+    syncPanel();
 
-        const img = document.createElement('img');
-        img.src     = src;
-        img.loading = 'lazy';
-        img.addEventListener('click', () => {
-            g.current = i;
-            save();
-            if (type === 'personas') applyPersona(key, src);
-            else                     applyChar(key, src);
-            renderStrip(type, key, stripId, cntId);
-            refreshZoomNav();
-        });
-
-        const del = document.createElement('button');
-        del.className = 'avga-del';
-        del.title     = 'Удалить';
-        del.innerHTML = '&times;';
-        del.addEventListener('click', ev => {
-            ev.stopPropagation();
-            g.images.splice(i, 1);
-            if (i === g.current)    { g._cur = null; g.current = Math.max(0, i - 1); }
-            else if (i < g.current) { g.current--; }
-            save();
-            renderStrip(type, key, stripId, cntId);
-            refreshZoomNav();
-        });
-
-        cell.append(img, del);
-        strip.append(cell);
-    });
-};
-
-// ── Заполнение селектов ───────────────────────────────────────────
-const populatePersonas = () => {
-    const sel = document.getElementById('avga-psel');
-    if (!sel) return;
-    const saved = sel.value;
-    sel.innerHTML = '';
-    const personas = getPersonaMap();
-    const keys     = Object.keys(personas);
-    log('personas', keys.length, keys.slice(0, 5));
-    if (!keys.length) {
-        sel.innerHTML = '<option value="">— нет —</option>';
-    } else {
-        keys.forEach(n => {
-            const o = document.createElement('option');
-            o.value = n; o.textContent = n;
-            sel.append(o);
-        });
-    }
-    const cur = pu().persona;
-    if (cur && sel.querySelector(`option[value="${CSS.escape(cur)}"]`))          sel.value = cur;
-    else if (saved && sel.querySelector(`option[value="${CSS.escape(saved)}"]`)) sel.value = saved;
-    renderStrip('personas', sel.value, 'avga-pstrip', 'avga-pcnt');
-};
-
-const populateChars = () => {
-    const sel = document.getElementById('avga-csel');
-    if (!sel) return;
-    const saved = sel.value;
-    sel.innerHTML = '';
-    const chars = getChars();
-    log('chars', chars.length, 'chid', this_chid);
-    if (!chars.length) {
-        sel.innerHTML = '<option value="">— нет —</option>';
-    } else {
-        chars.forEach(ch => {
-            if (!ch) return;
-            const key = normAv(ch.avatar);
-            const o   = document.createElement('option');
-            o.value       = key;
-            o.textContent = ch.name;
-            sel.append(o);
-        });
-    }
-    const ck = curCharKey();
-    if (ck && sel.querySelector(`option[value="${CSS.escape(ck)}"]`))            sel.value = ck;
-    else if (saved && sel.querySelector(`option[value="${CSS.escape(saved)}"]`)) sel.value = saved;
-    renderStrip('characters', sel.value, 'avga-cstrip', 'avga-ccnt');
-};
-
-// ── Привязка событий панели ───────────────────────────────────────
-const wirePanel = () => {
-    document.getElementById('avga-psel')?.addEventListener('change', e =>
-        renderStrip('personas', e.target.value, 'avga-pstrip', 'avga-pcnt'));
-    document.getElementById('avga-csel')?.addEventListener('change', e =>
-        renderStrip('characters', e.target.value, 'avga-cstrip', 'avga-ccnt'));
-    document.getElementById('avga-pref')?.addEventListener('click', populatePersonas);
-    document.getElementById('avga-cref')?.addEventListener('click', populateChars);
-
-    const fiP = mkInput(async b64 => {
-        const key = document.getElementById('avga-psel')?.value;
-        if (!key) return;
-        getGal('personas', key).images.push(b64);
-        save();
-        renderStrip('personas', key, 'avga-pstrip', 'avga-pcnt');
-        refreshZoomNav();
-    });
-    const fiC = mkInput(async b64 => {
-        const key = document.getElementById('avga-csel')?.value;
-        if (!key) return;
-        getGal('characters', key).images.push(b64);
-        save();
-        renderStrip('characters', key, 'avga-cstrip', 'avga-ccnt');
-        refreshZoomNav();
-    });
-    document.getElementById('avga-padd')?.addEventListener('click', () => fiP.click());
-    document.getElementById('avga-cadd')?.addEventListener('click', () => fiC.click());
-
-    populatePersonas();
-    populateChars();
-};
-
-// ══════════════════════════════════════════════════════════════════
-// ZOOM NAV — кнопки навигации в окне zoom-аватара
-// ══════════════════════════════════════════════════════════════════
-const ZOOM_IMG_SEL = [
-    '.zoomed_avatar_content img',
-    '.zoomed_avatar img',
-    '#zoom_portrait img',
-    '#character_popup img',
-    '.avatar_zoom img',
-    '#shadow_popup img',
-    '.popup img'
-].join(', ');
-
-const ZOOM_CONTAINERS = [
-    '.zoomed_avatar_content',
-    '.zoomed_avatar',
-    '#zoom_portrait',
-    '#character_popup',
-    '.avatar_zoom',
-    '#shadow_popup'
-].join(', ');
-
-let zCtx = null;
-
-const detectCtxNow = () => {
-    const ck = curCharKey();
-    if (ck && (S.characters[ck]?.images?.length ?? 0) > 0)
-        return { type: 'characters', key: ck };
-    const pName = pu().persona;
-    if (pName && (S.personas[pName]?.images?.length ?? 0) > 0)
-        return { type: 'personas', key: pName };
-    for (const [k, d] of Object.entries(S.characters))
-        if ((d.images?.length ?? 0) > 1) return { type: 'characters', key: k };
-    for (const [k, d] of Object.entries(S.personas))
-        if ((d.images?.length ?? 0) > 1) return { type: 'personas', key: k };
-    return null;
-};
-
-// Захватываем клик по аватарке в чате
-document.addEventListener('click', e => {
-    const img = e.target.closest('.mes_img, .mes_img_container img, img.avatar');
-    if (!img) return;
-    try {
-        const mes = img.closest('.mes');
-        if (mes?.getAttribute('is_user') === 'true') {
-            const n = pu().persona;
-            if (n) zCtx = { type: 'personas', key: n };
-        } else {
-            const ck = curCharKey();
-            if (ck) zCtx = { type: 'characters', key: ck };
+    $(document).on('click', '.arc-genre-pill', function () {
+        const g = $(this).data('genre');
+        const s = getSettings();
+        const idx = s.selectedGenres.indexOf(g);
+        if (idx === -1) {
+            s.selectedGenres.push(g);
+        } else if (s.selectedGenres.length > 1) {
+            s.selectedGenres.splice(idx, 1);
         }
-        log('zoom ctx set', zCtx);
-        setTimeout(refreshZoomNav, 100);
-    } catch {}
-}, true);
+        saveSettingsDebounced();
+        syncPanel();
+    });
 
-// Элемент навигации
-const zNav = document.createElement('div');
-zNav.className   = 'avga-zoom-nav';
-zNav.hidden      = true;
-zNav.dataset.ctx = '';
-zNav.innerHTML   = `
-    <button class="avga-zb" id="avga-zprev" title="Предыдущий">&#8249;</button>
-    <span id="avga-zcnt"></span>
-    <button class="avga-zb" id="avga-znext" title="Следующий">&#8250;</button>`;
+    $('#arc_ext_enabled').on('change', function () {
+        getSettings().isEnabled = this.checked;
+        saveSettingsDebounced();
+    });
 
-const navigate = dir => {
-    const ctx = zCtx ?? detectCtxNow();
-    if (!ctx) { log('navigate: no ctx'); return; }
-    const g = getGal(ctx.type, ctx.key);
-    if (!g.images.length) { log('navigate: empty gallery'); return; }
-    g.current = (g.current + dir + g.images.length) % g.images.length;
-    save();
-    const src = g.images[g.current];
-    log('navigate', ctx.key, '->', g.current, '/', g.images.length);
+    $('#arc_ext_notify').on('change', function () {
+        getSettings().showNotifications = this.checked;
+        saveSettingsDebounced();
+    });
 
-    // Обновляем изображение в zoom-окне
-    const zImg = document.querySelector(ZOOM_IMG_SEL);
-    if (zImg) { zImg.src = src; log('zoom img updated'); }
-    else log('zoom img not found');
+    $('#arc_ext_slider').on('input', function () {
+        const v = parseInt(this.value);
+        getSettings().chance = v;
+        document.getElementById('arc_ext_value').textContent = `${v}%`;
+        saveSettingsDebounced();
+    });
 
-    // Применяем к сообщениям в чате
-    if (ctx.type === 'personas') applyPersona(ctx.key, src);
-    else                         applyChar(ctx.key, src);
+    $('#arc_ext_ctx_slider').on('input', function () {
+        const v = parseInt(this.value);
+        getSettings().contextMessages = v;
+        document.getElementById('arc_ext_ctx_value').textContent = `${v}`;
+        saveSettingsDebounced();
+    });
+}
 
-    // Обновляем UI
-    const stripId = ctx.type === 'personas' ? 'avga-pstrip' : 'avga-cstrip';
-    const cntId   = ctx.type === 'personas' ? 'avga-pcnt'   : 'avga-ccnt';
-    renderStrip(ctx.type, ctx.key, stripId, cntId);
-    refreshZoomNav(ctx);
-};
-
-zNav.addEventListener('click', e => {
-    const btn = e.target.closest('.avga-zb');
-    if (!btn) return;
-    if (btn.id === 'avga-zprev') navigate(-1);
-    if (btn.id === 'avga-znext') navigate(1);
-});
-
-const refreshZoomNav = (forcedCtx) => {
-    const ctx   = forcedCtx ?? zCtx ?? detectCtxNow();
-    if (!ctx) { zNav.hidden = true; return; }
-    const g     = S[ctx.type]?.[ctx.key];
-    const total = g?.images?.length ?? 0;
-    zNav.hidden = total < 2;
-    const cntEl = zNav.querySelector('#avga-zcnt');
-    if (cntEl) cntEl.textContent = total > 1 ? `${(g.current ?? 0) + 1}/${total}` : '';
-    zNav.dataset.ctx = JSON.stringify(ctx);
-};
-
-// Прикрепляем nav к zoom-контейнеру при его появлении
-const tryAttachZoomNav = () => {
-    const el = document.querySelector(ZOOM_CONTAINERS);
-    if (!el || el.contains(zNav)) return;
-    if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
-    el.append(zNav);
-    refreshZoomNav();
-};
-new MutationObserver(tryAttachZoomNav).observe(document.body, { childList: true, subtree: true });
-
-// ── ST Events ─────────────────────────────────────────────────────
-const tryOn = (ev, fn) => {
-    try { if (event_types[ev]) eventSource.on(event_types[ev], fn); } catch {}
-};
-tryOn('CHARACTER_SELECTED',    () => { zCtx = null; populateChars();   reapplyChars(); });
-tryOn('CHAT_CHANGED',          () => { zCtx = null; populatePersonas(); populateChars(); reapplyChars(); reapplyPersonas(); });
-tryOn('USER_MESSAGE_RENDERED', () => { reapplyChars(); reapplyPersonas(); });
-tryOn('LLM_MESSAGE_RENDERED',  reapplyChars);
-tryOn('PERSONA_SELECTED',      () => { zCtx = null; populatePersonas(); });
-
-// ── Init ──────────────────────────────────────────────────────────
-const injectPanel = () => {
-    if (document.getElementById('avga-panel')) return true;
-    const target = document.getElementById('extensions_settings');
-    if (!target) return false;
-    target.insertAdjacentHTML('beforeend', PANEL_HTML);
-    wirePanel();
-    log('Panel injected');
-    return true;
-};
-
-const init = () => {
-    log('Loading v1.3...');
-    if (!injectPanel()) {
-        const obs = new MutationObserver(() => { if (injectPanel()) obs.disconnect(); });
-        obs.observe(document.body, { childList: true, subtree: true });
+// ─── Event hooks ──────────────────────────────────────────────────────────────
+function onUserMessageSent() {
+    const s = getSettings();
+    if (pendingNotification && s.showNotifications) {
+        showArcNotification(pendingNotification);
     }
-    reapplyChars();
-    reapplyPersonas();
-    [800, 2000, 5000].forEach(ms => setTimeout(() => {
-        populatePersonas();
-        populateChars();
-    }, ms));
-    log('Init done');
-};
+    pendingNotification = null;
+}
 
-init();
+function onBotMessageReceived() {
+    const s = getSettings();
+
+    setExtensionPrompt(extensionName, '', extension_prompt_types.IN_CHAT, 0);
+
+    if (!s.isEnabled || !s.selectedGenres.length) return;
+
+    const roll = Math.floor(Math.random() * 100) + 1;
+    console.log(`[Arc Catalyst] Roll: ${roll}, Need: ≤${s.chance}`);
+
+    if (roll <= s.chance) {
+        const recentContext = getRecentContext(s.contextMessages);
+        const prompt = buildDynamicArcPrompt(recentContext, s.selectedGenres);
+
+        setExtensionPrompt(
+            extensionName,
+            prompt,
+            extension_prompt_types.IN_CHAT,
+            0
+        );
+
+        pendingNotification = s.selectedGenres;
+        console.log('[Arc Catalyst] ✓ Arc prompt injected with context:', s.contextMessages, 'messages');
+    } else {
+        console.log('[Arc Catalyst] ✗ No arc this time');
+    }
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+jQuery(async () => {
+    console.log('[Arc Catalyst] Loading...');
+    loadSettings();
+    setupPanel();
+    eventSource.on(event_types.MESSAGE_SENT, onUserMessageSent);
+    eventSource.on(event_types.MESSAGE_RECEIVED, onBotMessageReceived);
+    console.log('[Arc Catalyst] Ready. Context-aware arc generation active.');
+});
