@@ -14,6 +14,9 @@
 }
 
 .arc-section-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.12em;
@@ -106,6 +109,166 @@
     color: var(--SmartThemeBodyColor, rgba(255,255,255,0.8));
 }
 
+/* ── Force Arc button ───────────────────────────────────────── */
+.arc-force-btn {
+    width: 100%;
+    padding: 9px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.15));
+    background: rgba(255,255,255,0.04);
+    color: var(--SmartThemeBodyColor, rgba(255,255,255,0.75));
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    letter-spacing: 0.03em;
+    transition: all 0.2s ease;
+    text-align: center;
+}
+
+.arc-force-btn:hover:not(:disabled) {
+    background: rgba(255,255,255,0.09);
+    border-color: var(--SmartThemeBodyColor, rgba(255,255,255,0.35));
+    color: var(--SmartThemeBodyColor, #fff);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+}
+
+.arc-force-btn:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: none;
+}
+
+.arc-force-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* ── Stats grid ─────────────────────────────────────────────── */
+.arc-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+}
+
+.arc-stat-item {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.07));
+    border-radius: 8px;
+    padding: 9px 10px 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    text-align: center;
+}
+
+.arc-stat-wide {
+    grid-column: 1 / -1;
+}
+
+.arc-stat-value {
+    font-size: 14px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--SmartThemeBodyColor, #fff);
+    line-height: 1;
+}
+
+.arc-stat-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    opacity: 0.3;
+    color: var(--SmartThemeBodyColor, #fff);
+}
+
+/* ── Reset button ───────────────────────────────────────────── */
+.arc-reset-btn {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: none;
+    opacity: 0.35;
+    color: var(--SmartThemeBodyColor, #fff);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    transition: opacity 0.2s;
+    text-decoration: none;
+}
+
+.arc-reset-btn:hover {
+    opacity: 0.7;
+}
+
+/* ── Arc history ────────────────────────────────────────────── */
+.arc-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 180px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.1) transparent;
+}
+
+.arc-history-list::-webkit-scrollbar {
+    width: 4px;
+}
+
+.arc-history-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.arc-history-list::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.1);
+    border-radius: 4px;
+}
+
+.arc-history-entry {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.05));
+    font-size: 12px;
+    color: var(--SmartThemeBodyColor, rgba(255,255,255,0.8));
+}
+
+.arc-history-entry:first-child {
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.1);
+}
+
+.arc-history-genres {
+    flex: 1;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.arc-history-time {
+    font-size: 11px;
+    opacity: 0.35;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.arc-history-empty {
+    font-size: 12px;
+    opacity: 0.25;
+    font-style: italic;
+    color: var(--SmartThemeBodyColor, #fff);
+    text-align: center;
+    padding: 10px 0;
+}
+
 .arc-footer-hint {
     font-size: 11px;
     opacity: 0.25;
@@ -114,7 +277,7 @@
     padding-top: 2px;
 }
 
-/* Notification */
+/* ── Notification ───────────────────────────────────────────── */
 .arc-notification {
     position: fixed;
     top: 20px;
