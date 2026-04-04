@@ -512,53 +512,6 @@ function renderPanel() {
     });
 
     // Click delegation
-    p.addEventListener('click', e => {
-        const btn = e.target.closest('[data-action]');
-        if (!btn) return;
-        const action  = btn.dataset.action;
-        const npcId   = btn.dataset.id;
-        const groupId = btn.dataset.group;
-
-        if (action === 'add-group')    { addGroup(); return; }
-        if (action === 'export')       { exportNPCs(); return; }
-        if (action === 'clear-scene')  { if (confirm('Убрать всех NPC из сцены?')) clearScene(); return; }
-        if (action === 'toggle-preview') {
-            const prev = p.querySelector('#npc_prompt_preview');
-            if (prev) prev.style.display = prev.style.display === 'none' ? 'block' : 'none';
-            return;
-        }
-        if (action === 'collapse') {
-            const g = getGroup(groupId);
-            if (g) { g.collapsed = !g.collapsed; saveSettingsDebounced(); renderPanel(); }
-            return;
-        }
-        if (action === 'add-all-group') { addGroupToScene(groupId); return; }
-        if (action === 'delete-group') {
-            if (confirm('Удалить группу и всех персонажей?')) {
-                getSettings().groups = getSettings().groups.filter(g => g.id !== groupId);
-                saveSettingsDebounced(); updatePrompt(); renderPanel();
-            }
-            return;
-        }
-        if (action === 'add-npc')  { openEditModal(null, groupId); return; }
-        if (action === 'add')      { addToScene(npcId); return; }
-        if (action === 'remove')   { removeFromScene(npcId); return; }
-        if (action === 'edit')     { openEditModal(getNPC(npcId), null); return; }
-        if (action === 'move-up')  { moveNPC(npcId, -1); return; }
-        if (action === 'move-down'){ moveNPC(npcId, +1); return; }
-        if (action === 'delete-npc') {
-            if (confirm('Удалить персонажа?')) {
-                for (const g of getSettings().groups) {
-                    g.npcs = (g.npcs || []).filter(n => n.id !== npcId);
-                }
-                saveSettingsDebounced(); updatePrompt(); renderPanel();
-            }
-            return;
-        }
-    }, { once: true });
-    // Re-bind after each render since innerHTML is replaced
-    // (above listener used once:true — need persistent bind via named fn)
-    // Используем постоянный делегированный обработчик через data-panel-bound
     if (!panel.dataset.panelBound) {
         panel.dataset.panelBound = '1';
         panel.addEventListener('click', panelClickHandler);
@@ -829,11 +782,30 @@ function saveNPC() {
 
 // ─── Init ──────────────────────────────────────────────────────
 jQuery(async () => {
+    const settingsHtml = `
+    <div class="npc_manager_settings">
+        <div class="inline-drawer">
+            <div class="inline-drawer-toggle inline-drawer-header">
+                <b>NPC Manager</b>
+                <div class="inline-drawer-icon fa-solid fa-circle-chevron-down"></div>
+            </div>
+            <div class="inline-drawer-content">
+                <div id="npc_manager_panel"></div>
+            </div>
+        </div>
+    </div>`;
+
+    // Вставляем панель в настройки расширений SillyTavern
+    $('#extensions_settings2').append(settingsHtml);
+
     loadSettings();
+
     // БАГ #4 ИСПРАВЛЕН: CHARACTER_MESSAGE_RENDERED вместо MESSAGE_RECEIVED
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, onBotMessageReceived);
-    eventSource.on(event_types.USER_MESSAGE_RENDERED,      onUserMessageSent);
+    // Слушаем отправку сообщения пользователя
+    eventSource.on(event_types.USER_MESSAGE_RENDERED, onUserMessageSent);
     // БАГ #14 ИСПРАВЛЕН: сброс isPresent при смене чата
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
+
     renderPanel();
 });
