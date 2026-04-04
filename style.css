@@ -566,3 +566,48 @@
     cursor: default;
     user-select: none;
 }
+
+/* ── Prompt preview (фича #13) ──────────────────────────────── */
+.npc-prompt-preview {
+    background: rgba(0,0,0,0.18);
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.08));
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 4px;
+}
+.npc-preview-text {
+    font-size: 11px;
+    color: var(--SmartThemeBodyColor, rgba(255,255,255,0.6));
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+    line-height: 1.5;
+    font-family: inherit;
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+/* ── messagesPresent counter (фича #15) ─────────────────────── */
+.npc-msg-counter {
+    font-size: 10px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: rgba(240, 190, 80, 0.85);
+    background: rgba(240, 190, 80, 0.1);
+    border: 1px solid rgba(240, 190, 80, 0.25);
+    border-radius: 10px;
+    padding: 1px 5px;
+    flex-shrink: 0;
+    cursor: default;
+}
+
+/* ── Move arrows (фича #12) ─────────────────────────────────── */
+.npc-row-actions .npc-icon-btn[data-action^="move"] {
+    font-size: 10px;
+    padding: 2px 4px;
+    opacity: 0.5;
+}
+.npc-row-actions .npc-icon-btn[data-action^="move"]:hover {
+    opacity: 1;
+    background: rgba(255,255,255,0.1);
+}
